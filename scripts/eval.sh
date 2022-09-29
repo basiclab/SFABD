@@ -12,7 +12,7 @@ weight_dir=outputs/pool_charades_32x32_k5l8_combined
 # select weight to evaluate
 #weight_file=outputs/pool_charades_16x16_k5l8/best_charades.pth
 #weight_file=outputs/pool_charades_16x16_k5l8_combined/pool_model_4e.pth
-weight_file=outputs/pool_charades_32x32_k5l8_combined/pool_model_7e.pth
+weight_file=outputs/pool_charades_32x32_k5l8_combined/pool_model_1e.pth
 
 # test batch size
 batch_size=48

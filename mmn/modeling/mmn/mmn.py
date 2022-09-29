@@ -27,49 +27,52 @@ class MMN(nn.Module):
     def forward(self, batches, cur_epoch=1):
         """
         Arguments:
-            batches.all_iou2d: list(B) num_sent x T x T
+            batches.iou2d: list(B) num_sent x T x T
             feat2ds: B x C x T x T
-            sent_feats: list(B) num_sent x C
+            query_feats: list(B) num_sent x C
         """
 
-        ious2d = batches.all_iou2d
+        ious2d = batches.iou2d
         separate_iou2d = batches.separate_iou2d  ## used for selecting the top-3 iou proposals with gt
 
         assert len(ious2d) == batches.feats.size(0) ## batch_size
-        for idx, (iou, sent) in enumerate(zip(ious2d, batches.queries)):
-            assert iou.size(0) == sent.size(0) ## num_query
-            #assert iou.size(0) == batches.num_sentence[idx]
 
+        
         feats = self.featpool(batches.feats)  # from pre_num_clip to num_clip with overlapped average pooling, e.g., 32 -> 16
 
         map2d = self.feat2d(feats)  # use MaxPool1d to generate 2d proposal-level feature map from 1d temporal features
+
+
 
         ## ConvNet of 2D temporal map and conv1x1 to project proposals to embedding space
         map2d = self.proposal_conv(map2d) 
 
         ## query encoder, project to embedding space
-        sent_feats = self.text_encoder(batches.queries, batches.wordlens)
-
+        query_feats = self.text_encoder(batches.tokenized_queries, batches.wordlens)
 
         ## for intra_query loss    
-        original_sentences = batches.sentences
-        num_sentence_batch = batches.num_sentence
-        mask = np.array([num > 1 for num in num_sentence_batch])
-        original_sentences = np.array(original_sentences)
-        selected_query_templates = original_sentences[mask]
+        queries = batches.queries
+
+        num_target_batch = batches.num_target
+
+        ## only keep multi-target samples
+        mask = np.array([num > 1 for num in num_target_batch])
+        queries = np.array(queries)
+        selected_query_templates = queries[mask]
         selected_query_templates = np.expand_dims(selected_query_templates, axis=1)
 
         ## preparing intra_query_mask to prune false neg samples        
-        ## if is same query, then value will be 0, other neg samples will be 1
+        ## if is same query template, then value will be 0, other neg samples will be 1
         intra_query_mask = np.ones((selected_query_templates.size, selected_query_templates.size))
         ## diagonal line is all 0
         for i in range(selected_query_templates.size):
             for j in range(selected_query_templates.size):
                 if selected_query_templates[i] == selected_query_templates[j]:
                     ## mask the sample with same query_template
-                    intra_query_mask[i, j] = 0 
+                    intra_query_mask[i, j] = 0
 
-        original_sent_feats = self.text_encoder(batches.all_tokenized_queries, batches.all_word_lens)
+        ## query feats of original query in multi-target samples
+        original_query_feats = self.text_encoder(batches.original_tokenized_queries, batches.original_word_lens)
 
         # inference
         contrastive_scores = []
@@ -77,7 +80,7 @@ class MMN(nn.Module):
         matching_scores_original = []
         _, T, _ = map2d[0].size()
 
-        for i, sf in enumerate(sent_feats):  # sent_feats: [num_sent x C] (len=B)
+        for i, sf in enumerate(query_feats):  # query_feats: [num_sent x C] (len=B)
             # iou part
             vid_feat = map2d[i]  # C x T x T
             vid_feat_norm = F.normalize(vid_feat, dim=0)
@@ -88,12 +91,12 @@ class MMN(nn.Module):
         # loss
         if self.training:
             loss_iou = self.iou_loss(torch.cat(matching_scores, dim=0), torch.cat(ious2d, dim=0), cur_epoch)
-            loss_vid, loss_sent, loss_intra_vid, loss_intra_query = self.contrastive_loss(map2d, sent_feats, ious2d, separate_iou2d, batches.moments, original_sent_feats, num_sentence_batch, intra_query_mask)
+            loss_vid, loss_sent, loss_intra_vid, loss_intra_query = self.contrastive_loss(map2d, query_feats, ious2d, separate_iou2d, batches.moments, original_query_feats, num_target_batch, intra_query_mask)
 
             return loss_vid, loss_sent, loss_intra_vid, loss_intra_query, loss_iou
 
         else:
-            return map2d, sent_feats, matching_scores  # first two maps for visualization
+            return map2d, query_feats, matching_scores  # first two maps for visualization
 
     
     ## for compute on new video
@@ -101,20 +104,20 @@ class MMN(nn.Module):
         """
         Arguments:
             feat2ds: B x C x T x T
-            sent_feats: list(B) num_sent x C
+            query_feats: list(B) num_sent x C
         """
         # backbone
         feats = self.featpool(batches.feats)  # from pre_num_clip to num_clip with overlapped average pooling, e.g., 256 -> 128
         map2d = self.feat2d(feats)  # use MaxPool1d to generate 2d proposal-level feature map from 1d temporal features
         map2d = self.proposal_conv(map2d)
-        sent_feats = self.text_encoder(batches.queries, batches.wordlens)
+        query_feats = self.text_encoder(batches.queries, batches.wordlens)
 
         # inference
         contrastive_scores = []
         matching_scores = []
         _, T, _ = map2d[0].size()
 
-        for i, sf in enumerate(sent_feats):  # sent_feat: [num_sent x C] (len=B)
+        for i, sf in enumerate(query_feats):  # sent_feat: [num_sent x C] (len=B)
             # iou part
             vid_feat = map2d[i]  # C x T x T
             vid_feat_norm = F.normalize(vid_feat, dim=0)
@@ -123,5 +126,5 @@ class MMN(nn.Module):
             matching_scores.append((matching_score*10).sigmoid() * self.feat2d.mask2d)
 
                
-        return map2d, sent_feats, matching_scores  # first two maps for visualization
+        return map2d, query_feats, matching_scores  # first two maps for visualization
     

@@ -9,8 +9,8 @@ MODEL:
       HIDDEN_SIZE: 512
       KERNEL_SIZE: 2
     FEAT2D:
-      NAME: "pool"
-      #NAME: "conv"
+      #NAME: "pool"
+      NAME: "conv"
       POOLING_COUNTS: [31] ## N-1
     TEXT_ENCODER:
       NAME: "BERT"

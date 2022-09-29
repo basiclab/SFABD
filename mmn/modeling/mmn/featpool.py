@@ -5,8 +5,10 @@ from torch import nn
 class FeatAvgPool(nn.Module):
     def __init__(self, input_size, hidden_size, kernel_size, stride):
         super(FeatAvgPool, self).__init__()
-        ## conv1d works on the last dimension
+        ## ex. (64, 4096) -> (64, 512)
         self.conv = nn.Conv1d(input_size, hidden_size, 1, 1) ## input_ch, output_ch, kernel_size, stride
+        ## kernel size = 2, stride = num_pre_clips // num_clips  64 // 32 = 2
+        ## ex. (64, 512) -> (32, 512)
         self.pool = nn.AvgPool1d(kernel_size, stride)
 
     def forward(self, x):

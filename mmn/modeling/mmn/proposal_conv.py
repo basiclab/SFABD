@@ -35,8 +35,6 @@ class ProposalConv(nn.Module):
             self.convs.append(nn.Conv2d(hidden_size, hidden_size, k))
             self.bn.append(nn.BatchNorm2d(hidden_size))
 
-        self.dropout = nn.Dropout(p=0.4)
-
         ## for projecting to embedding space
         self.conv1x1_iou = nn.Conv2d(hidden_size, output_size, 1)
         #self.conv1x1_contrastive = nn.Conv2d(hidden_size, output_size, 1)
@@ -46,9 +44,6 @@ class ProposalConv(nn.Module):
         for i in range(self.num_stack_layers):
             ## conv -> bn -> relu
             x = self.bn[i](self.convs[i](x)).relu()
-
-            ## added dropout after conv -> bn -> relu in every layer
-            x = self.dropout(x)
 
             padded_mask, masked_weight = get_padded_mask_and_weight(padded_mask, self.convs[i])
             x = x * masked_weight

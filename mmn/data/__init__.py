@@ -4,7 +4,7 @@ from mmn.utils.comm import get_world_size
 from mmn.utils.imports import import_file
 from . import datasets as D
 from .samplers import DistributedSampler
-from .collate_batch import BatchCollator, BatchCollator_original
+from .collate_batch import BatchCollator
 
 def build_dataset(dataset_list, dataset_catalog, cfg, is_train=True):
     # build specific dataset
@@ -125,14 +125,8 @@ def make_data_loader(cfg, is_train=True, is_distributed=False, is_for_period=Fal
             collate_fn=BatchCollator(),
             pin_memory=True, ## added
         )
-        '''
-        data_loader = torch.utils.data.DataLoader(
-            dataset,
-            num_workers=cfg.DATALOADER.NUM_WORKERS,
-            batch_sampler=batch_sampler,
-            collate_fn=BatchCollator_original(),
-        )
-        '''
+
+
         data_loaders.append(data_loader)
         
     if is_train or is_for_period:

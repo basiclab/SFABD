@@ -1,28 +1,30 @@
 import torch
 from torch import nn
 
-
 ## for pool feat
 class SparseMaxPool(nn.Module):
     def __init__(self, pooling_counts, N):
         super(SparseMaxPool, self).__init__()
-        mask2d = torch.zeros(N, N, dtype=torch.bool) ## N = 16 for charades
+        mask2d = torch.zeros(N, N, dtype=torch.bool) ## N = 32 for charades
         mask2d[range(N), range(N)] = 1 ## diagonal = 1
 
         stride, offset = 1, 0
         maskij = []
-        for c in pooling_counts: ## c = 15 for charades
+        for c in pooling_counts: ## c = 32-1 for charades
             # fill all diagonal lines
-            for _ in range(c):
+            for _ in range(c): ## start from diagonal line (proposal len = 1), iterate all line with fixed proposal length
                 # fill a diagonal line
                 offset += stride
                 i, j = range(0, N - offset, stride), range(offset, N, stride)
                 mask2d[i, j] = 1
                 maskij.append((i, j))
+
             stride *= 2
         
-        poolers = [nn.MaxPool1d(2, 1) for _ in range(pooling_counts[0])]
-        for c in pooling_counts[1:]:
+        poolers = [nn.MaxPool1d(2, 1) for _ in range(pooling_counts[0])] ## 31 same poolers
+        
+        ## not used in Charades 32x32
+        for c in pooling_counts[1:]:            
             poolers.extend(
                 [nn.MaxPool1d(3, 2)] + [nn.MaxPool1d(2, 1) for _ in range(c - 1)]
             )
@@ -32,12 +34,13 @@ class SparseMaxPool(nn.Module):
         self.poolers = poolers
 
     def forward(self, x):
-        B, D, N = x.shape ## batch, dim, Seq_len=16
-        map2d = x.new_zeros(B, D, N, N)
+        B, D, N = x.shape ## batch_size=24, dim=512, Seq_len=32
+        map2d = x.new_zeros(B, D, N, N) ## (bs, 512, 32, 32)
         map2d[:, :, range(N), range(N)] = x  # fill a diagonal line with x seq (non-overlapping clip feature)
-        for pooler, (i, j) in zip(self.poolers, self.maskij):
+        for pooler, (i, j) in zip(self.poolers, self.maskij): 
             x = pooler(x)
             map2d[:, :, i, j] = x
+
         return map2d
 
 
@@ -61,7 +64,9 @@ class SparseConv(nn.Module):
             stride *= 2
 
         self.convs = nn.ModuleList()
-        self.convs.extend([nn.Conv1d(hidden_size, hidden_size, 2, 1) for _ in range(pooling_counts[0])])
+        self.convs.extend([nn.Conv1d(hidden_size, hidden_size, 2, 1) for _ in range(pooling_counts[0])]) ## 31 same Conv1d(512, 512, kernel_size=2, stride=1)
+
+        ## not used in Charades 32x32
         for c in pooling_counts[1:]:
             self.convs.extend(
                 [nn.Conv1d(hidden_size, hidden_size, 3, 2)] + [nn.Conv1d(hidden_size, hidden_size, 2, 1) for _ in range(c - 1)]
@@ -71,12 +76,14 @@ class SparseConv(nn.Module):
         self.maskij = maskij
 
     def forward(self, x):
-        B, D, N = x.shape
-        map2d = x.new_zeros(B, D, N, N)
+        B, D, N = x.shape ## batch_size=24, dim=512, Seq_len=32
+        map2d = x.new_zeros(B, D, N, N) ## (bs, 512, 32, 32)
         map2d[:, :, range(N), range(N)] = x  # fill a diagonal line
+
         for conv, (i, j) in zip(self.convs, self.maskij):
             x = conv(x)
             map2d[:, :, i, j] = x
+
         return map2d
 
 

@@ -3,4 +3,4 @@ __pycache__
 outputs
 
 C3D_model/
-datasets
+data/
