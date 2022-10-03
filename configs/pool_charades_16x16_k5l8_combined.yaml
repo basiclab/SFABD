@@ -17,7 +17,7 @@ MODEL:
     PREDICTOR:
       HIDDEN_SIZE: 512
       KERNEL_SIZE: 5
-      NUM_STACK_LAYERS: 8
+      NUM_LAYERS: 8
     LOSS:
       MIN_IOU: 0.5
       MAX_IOU: 1.0
@@ -34,10 +34,10 @@ DATASETS:
   #TEST: ("charades_combined_test",)
   TRAIN: ("charades_separate_train_1gt", )
   TEST: ("charades_separate_test_1gt",)
-  
+
 
 INPUT:
-  NUM_PRE_CLIPS: 32
+  NUM_INIT_CLIPS: 32
 DATALOADER:
   NUM_WORKERS: 8
 SOLVER:

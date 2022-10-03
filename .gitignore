@@ -1,6 +1,7 @@
 __pycache__
+.python-version
 
-outputs
+logs
 
 C3D_model/
-datadir/
+data

@@ -17,7 +17,7 @@ MODEL:
     PREDICTOR:
       HIDDEN_SIZE: 512
       KERNEL_SIZE: 5
-      NUM_STACK_LAYERS: 8
+      NUM_LAYERS: 8
     LOSS:
       MIN_IOU: 0.5
       MAX_IOU: 1.0
@@ -31,16 +31,16 @@ MODEL:
 DATASETS:
   NAME: "charades_combined"
   #TRAIN: ("charades_combined_train", )
-  TRAIN: ("charades_combined_train_remove_repeat_action_video", )
+  TRAIN: "charades_combined_train_remove_repeat_action_video"
   #TRAIN: ("charades_separate_augmented", )
   #TEST: ("charades_combined_test",)
-  TEST: ("charades_combined_test_authentic_multi_target",)
+  TEST: "charades_combined_test_authentic_multi_target"
   #TRAIN: ("charades_separate_train_1gt", )
   #TEST: ("charades_separate_test_1gt",)
-  
+
 
 INPUT:
-  NUM_PRE_CLIPS: 64
+  NUM_INIT_CLIPS: 64
 DATALOADER:
   NUM_WORKERS: 8
 SOLVER:
