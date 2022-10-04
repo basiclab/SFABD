@@ -1,4 +1,3 @@
-from copy import deepcopy
 import json
 import os
 
@@ -9,9 +8,9 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from mmn.datasets import MultiTargetCharadesDataset
+from mmn.datasets import MultiTargetCharadesDataset, CharadesDataset
 from mmn.evaluation import inference_loop, evaluate
-from mmn.losses import ContrastiveLoss, ScaledBCELoss
+from mmn.losses import ContrastiveLoss, ScaledIoULoss
 from mmn.misc import AttrDict, set_seed
 from mmn.models.main import MMN
 
@@ -25,7 +24,7 @@ def write_recall_to_file(path, train_recalls, test_recalls, step, epoch):
     else:
         history = []
     history.append({
-        'epoch': epoch,
+        'epoch': epoch + 1,
         'step': step,
         'train': train_recalls,
         'test': test_recalls,
@@ -84,7 +83,7 @@ def training_loop(config: AttrDict):
         num_workers=min(torch.get_num_threads(), 8),
     )
 
-    loss_bce_fn = ScaledBCELoss(
+    loss_bce_fn = ScaledIoULoss(
         min_iou=config.loss.iou.min_iou,
         max_iou=config.loss.iou.max_iou,
     )
@@ -118,15 +117,15 @@ def training_loop(config: AttrDict):
             base_params.append(params)
 
     optimizer = optim.AdamW([
-        {'params': base_params, 'lr': config.optimizer.lr},
-        {'params': bert_params, 'lr': config.optimizer.lr * 0.1}
+        {'params': base_params, 'lr': config.optimizer.base_lr},
+        {'params': bert_params, 'lr': config.optimizer.bert_lr}
     ], betas=(0.9, 0.99), weight_decay=1e-5)
 
-    model.train()
     step = 0
     for epoch in range(config.optimizer.epochs):
+        model.train()
         # freeze BERT parameters for the first few epochs
-        if epoch < config.optimizer.bert_freeze_epoch:  # TODO: breaking change
+        if epoch < config.optimizer.bert_freeze_epoch:
             ber_requires_grad = False
         else:
             ber_requires_grad = True
@@ -144,7 +143,6 @@ def training_loop(config: AttrDict):
         )
         train_results = []  # for recall calculation
         for batch, info in pbar:
-            model.train()
             batch = {key: value.to(device) for key, value in batch.items()}
             video_feats, query_feats, sents_feats, scores2d = model(**batch)
 
@@ -168,7 +166,6 @@ def training_loop(config: AttrDict):
                     iou2d=batch["iou2d"],
                     iou2ds=batch["iou2ds"],
                     num_targets=batch["num_targets"],
-                    scatter_idx=batch["scatter_idx"],
                 )
 
                 loss_con = torch.stack([
@@ -180,7 +177,7 @@ def training_loop(config: AttrDict):
 
             loss = (
                 loss_iou * config.loss.iou.weight +
-                loss_con * config.loss.contrastive.weight   # TODO: check weight
+                loss_con * config.loss.contrastive.weight
             )
 
             optimizer.zero_grad()
@@ -193,7 +190,7 @@ def training_loop(config: AttrDict):
             # save results for recall calculation
             train_results.append({
                 'scores2d': scores2d.detach().cpu(),
-                **deepcopy(info),
+                **info,
             })
 
             # save loss to tensorboard
@@ -252,3 +249,12 @@ def training_loop(config: AttrDict):
         }
         path = os.path.join(config.output_dir, f"epoch_{epoch + 1}.pth")
         torch.save(state, path)
+
+        # print to console
+        print(",".join([
+            f"Epoch {epoch + 1:2d}/{config.optimizer.epochs:2d}",
+            f"R@1,IoU@0.7: train {train_recalls['all-target']['R@1,IoU@0.7']:4.2f}",
+        ]))
+
+        writer.flush()
+        test_writer.flush()

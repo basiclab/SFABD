@@ -88,13 +88,12 @@ def evaluate(
                 'query': batch['query'][batch_idx],
                 'sents': batch['sents'][batch_idx],
                 'vid': batch['vid'][batch_idx],
-                'idx': batch['idx'][batch_idx],
+                'idx': batch['idx'][batch_idx].item(),
             }
 
             output_moments, scores1d = scores2d_to_moments_scores1d(scores2d, duration)
-            mask = nms(output_moments, scores1d, nms_threshold)
-            output_moments = output_moments[mask]
-            scores1d = scores1d[mask]
+            rank = nms(output_moments, scores1d, nms_threshold)
+            output_moments = output_moments[rank]
 
             # R@{rec_n}
             for rec_idx, rec_n in enumerate(rec_metrics):

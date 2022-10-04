@@ -30,13 +30,14 @@ def nms(
         mask: [?], True for the moments that are not suppressed
     """
     N = moments.shape[0]
-    ranks = scores1d.argsort(descending=True)
+    rank = scores1d.argsort(descending=True)
     mask = scores1d.new_ones(N, dtype=torch.bool)
-    for idx in ranks:           # iterate from highest score to lowest score
+    remain = []
+    for idx in rank:           # iterate from highest score to lowest score
         if mask[idx]:
             mask[iou(moments[idx], moments) > threshold] = False
-            mask[idx] = True
-    return mask
+            remain.append(idx)
+    return torch.tensor(remain)
 
 
 def scores2d_to_moments_scores1d(
@@ -72,6 +73,8 @@ def moment_to_iou2d(
     moments[:, 1] += 1
     moments = moments * duration / num_clips
     iou2d = iou(target_moment, moments).reshape(num_clips, num_clips)
+    iou2d = iou2d * target_moment.new_ones(iou2d.shape).triu()
+    assert (iou2d >= 0).all() and (iou2d <= 1).all()
     return iou2d
 
 

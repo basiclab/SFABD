@@ -11,7 +11,7 @@ class Conv1dPool(nn.Module):
         super().__init__()
         self.model = nn.Sequential(
             nn.Conv1d(in_channel, out_channel, 1, 1),
-            nn.ReLU(inplace=False),
+            nn.ReLU(inplace=True),
             nn.AvgPool1d(pool_kernel_size, pool_stride_size),
         )
 
@@ -96,20 +96,14 @@ class MMN(nn.Module):
             scores_matrix: [B, D, D], the value range is [-1, 1]
         """
         B, C, D, _ = video_feats.shape
-        device = video_feats.device
-        ones = torch.ones(D, D, device=device).bool()  # [D, D]
-        mask = torch.triu(ones, diagonal=0)            # [D, D]
-        video_feats = video_feats.masked_select(mask).view(B, C, -1)    # [B, C, P]
-        video_feats = video_feats.permute(0, 2, 1)                      # [B, P, C]
-        video_feats = F.normalize(video_feats, dim=-1)                  # [B, P, C]
-        query_feats = F.normalize(query_feats, dim=-1)                  # [B, C]
-        scores = torch.mul(video_feats, query_feats.unsqueeze(1))       # [B, P, C]
-        scores = scores.sum(dim=-1)                                     # [B, P]
-
-        scores_matrix = torch.zeros(B, D, D, device=device)             # [B, D, D]
-        scores_matrix[mask.unsqueeze(0).expand(B, -1, -1)] = scores.view(-1)
-        scores_matrix = torch.sigmoid(scores_matrix * 10)               # TODO: magic
-        return scores_matrix                                            # [B, D, D]
+        video_feats = F.normalize(video_feats, dim=1)
+        query_feats = F.normalize(query_feats, dim=-1)
+        scores2d = video_feats * query_feats.unsqueeze(-1).unsqueeze(-1)
+        scores2d = scores2d.sum(dim=1)              # [B, D, D]
+        scores2d = torch.sigmoid(scores2d * 10)     # [B, D, D]
+        mask = video_feats.new_ones(D, D).triu()    # [D, D]
+        scores2d = scores2d * mask.unsqueeze(0)     # [B, D, D]
+        return scores2d
 
     def forward(
         self,
@@ -130,27 +124,9 @@ class MMN(nn.Module):
         video_feats = self.video_model(video_feats)
         query_feats = self.query_model(query_tokens, query_length)
         sents_feats = self.query_model(sents_tokens, sents_length)
-        scores = self.matching_scores(video_feats, query_feats)
+        scores2d = self.matching_scores(video_feats, query_feats)
 
-        return video_feats, query_feats, sents_feats, scores
-
-    def evaluate(
-        self,
-        video_feats: torch.Tensor,          # [B, NUM_INIT_CLIPS, C]
-        query_tokens: torch.Tensor,         # [B, L]
-        query_length: torch.Tensor,         # [B]
-        **kwargs,                           # dummy
-    ):
-        """
-            B: (B)atch size
-            C: (C)hannel = JOINT_SPACE_SIZE
-            L: (L)ength of tokens
-        """
-        video_feats = self.video_model(video_feats)
-        query_feats = self.query_model(query_tokens, query_length)
-        scores = self.matching_scores(video_feats, query_feats)
-
-        return video_feats, query_feats, None, scores
+        return video_feats, query_feats, sents_feats, scores2d
 
 
 if __name__ == '__main__':

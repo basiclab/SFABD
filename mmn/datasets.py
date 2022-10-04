@@ -5,7 +5,7 @@ import torch
 from tqdm import tqdm
 from transformers import DistilBertTokenizer
 
-from mmn.utils import moment_to_iou2d, moments_to_iou2d, multi_vgg_feats
+from mmn.utils import moment_to_iou2d, moments_to_iou2d, multi_vgg_feats, nms
 
 
 class MultiTargetCharadesDataset(torch.utils.data.Dataset):
@@ -56,33 +56,33 @@ class MultiTargetCharadesDataset(torch.utils.data.Dataset):
 
         self.annos = []
         for _, anno in tqdm(annos.items(), ncols=0, leave=False):
-            duration = anno['duration']            # video length
-            moments = []                           # start and end time of each annotation in a video
-            iou2ds = []
-            sents = []                             # all query from multiple samples
+            duration = anno['duration']     # video length
+            moments = []                    # start and end time of each moment
+            iou2ds = []                     # iou2d for each mement
+            sents = []                      # sentence for each moment
             for (start, end), sentence in zip(anno['timestamps'], anno['sentences']):
-                moment = [max(start, 0), min(end, duration)]
+                moment = torch.Tensor([max(start, 0), min(end, duration)])
                 if moment[0] < moment[1]:
-                    iou2d = moment_to_iou2d(
-                        torch.Tensor(moment), num_clips, duration)
+                    iou2d = moment_to_iou2d(moment, num_clips, duration)
                     iou2ds.append(iou2d)
                     moments.append(moment)
                     sents.append(sentence)
+            moments = torch.stack(moments, dim=0)
             iou2ds = torch.stack(iou2ds)
-            iou2d = moments_to_iou2d(
-                torch.tensor(moments), num_clips, duration)
+            iou2d = moments_to_iou2d(moments, num_clips, duration)
             num_targets = torch.tensor(len(moments))
 
+            assert len(moments) != 0
             self.annos.append({
                 'vid': anno['video'],
                 'seq_index': anno['seq_index'],
-                'query': anno['query'],             # query string
-                'sents': sents,                     # original sentences
-                'iou2d': iou2d,                     # 2d iou map
-                'iou2ds': iou2ds,                   # list of 2d iou map
-                'num_targets': num_targets,         # number of target moments
-                'moments': moments,                 # clips moments in seconds
-                'duration': duration,               # video length in seconds
+                'query': anno['query'],                 # query string
+                'sents': sents,                         # original sentences
+                'iou2d': iou2d,                         # 2d iou map
+                'iou2ds': iou2ds,                       # list of 2d iou map
+                'num_targets': num_targets,             # number of target moments
+                'moments': moments,                     # clips moments in seconds
+                'duration': torch.tensor(duration),     # video length in seconds
             })
 
     def __getitem__(self, idx):
@@ -123,11 +123,7 @@ class MultiTargetCharadesDataset(torch.utils.data.Dataset):
         ) = list(zip(*batch))       # list of batch to batch of list
 
         num_targets = torch.stack(num_targets_list, dim=0)
-        B = len(num_targets_list)
-        scatter_idx = torch.arange(B).repeat_interleave(num_targets, dim=0)
-
         sents_all = sum(sents_list, [])
-        assert len(sents_all) == len(scatter_idx)
 
         query = self.tokenizer(
             query_list, padding=True, return_tensors="pt", return_length=True)
@@ -143,14 +139,13 @@ class MultiTargetCharadesDataset(torch.utils.data.Dataset):
             'sents_tokens': sents['input_ids'],
             'sents_length': sents['length'],
             'num_targets': num_targets,
-            'scatter_idx': scatter_idx,
-        }, {        # second dictionary must not contain tensors
-            'query': query_list,
-            'sents': sents_list,
-            'moments': moments_list,
-            'duration': duration_list,
-            'vid': vid_list,
-            'idx': idx_list,
+        }, {        # for evaluation
+            'query': query_list,                            # List[str]
+            'sents': sents_list,                            # List[List[str]]
+            'moments': moments_list,                        # List[torch.Tensor]
+            'duration': torch.stack(duration_list, dim=0),  # torch.Tensor
+            'vid': vid_list,                                # List[str]
+            'idx': torch.tensor(idx_list),                  # torch.Tensor
         }
 
     def __len__(self):
@@ -198,19 +193,20 @@ class CharadesDataset(MultiTargetCharadesDataset):
         for vid, anno in tqdm(annos.items(), ncols=0, leave=False):
             duration = anno['duration']            # video length
             for sent, moment in zip(anno['sentences'], anno['timestamps']):
-                iou2d = moment_to_iou2d(
-                    torch.Tensor(moment), num_clips, duration)
-                self.annos.append({
-                    'vid': [vid],
-                    'seq_index': [[0, None]],           # include all frames
-                    'query': sent,                      # query string
-                    'sents': [sent],                    # original sentences
-                    'iou2d': iou2d,                     # 2d iou map
-                    'iou2ds': iou2d.unsqueeze(0),       # list of 2d iou map
-                    'num_targets': torch.tensor(1),     # number of target moments
-                    'moments': [moment],                # clips moments in seconds
-                    'duration': duration,               # video length in seconds
-                })
+                if moment[0] < moment[1]:
+                    moment = torch.Tensor(moment)
+                    iou2d = moment_to_iou2d(moment, num_clips, duration)
+                    self.annos.append({
+                        'vid': [vid],
+                        'seq_index': [[0, None]],               # include all frames
+                        'query': sent,                          # query string
+                        'sents': [sent],                        # original sentences
+                        'iou2d': iou2d,                         # 2d iou map
+                        'iou2ds': iou2d.unsqueeze(0),           # list of 2d iou map
+                        'num_targets': torch.tensor(1),         # number of target moments
+                        'moments': moment.unsqueeze(0),         # all moments
+                        'duration': torch.tensor(duration),     # video length in seconds
+                    })
 
 
 if __name__ == '__main__':
@@ -218,6 +214,7 @@ if __name__ == '__main__':
 
     def test(dataset):
         for i in torch.randint(0, len(dataset), (2, )):
+            print(f"index: {i}")
             for data in dataset[i]:
                 if hasattr(data, 'shape'):
                     print(f"type: {type(data)}, shape: {data.shape}")
@@ -243,12 +240,22 @@ if __name__ == '__main__':
             print("info:")
             for k, v in info.items():
                 print(f"{k:<{name_length}s}: {len(v)}")
-                assert len(v) == batch_size
+            print('-' * 80)
             break
 
     dataset = MultiTargetCharadesDataset(
-        ann_file='datadir/Charades_STA/combined_charades_train_remove_repeat_action_videos.json',
-        vgg_feat_file="./datadir/Charades_STA/vgg_rgb_features.hdf5",
+        ann_file='data/Charades_STA/combined_charades_train_remove_repeat_action_videos.json',
+        vgg_feat_file="./data/Charades_STA/vgg_rgb_features.hdf5",
+        c3d_feat_folder=None,
+        num_init_clips=64,
+        num_clips=32,
+        feat_type='vgg',
+    )
+    test(dataset)
+
+    dataset = MultiTargetCharadesDataset(
+        ann_file='data/Charades_STA/combined_charades_test.json',
+        vgg_feat_file="./data/Charades_STA/vgg_rgb_features.hdf5",
         c3d_feat_folder=None,
         num_init_clips=64,
         num_clips=32,
@@ -257,8 +264,18 @@ if __name__ == '__main__':
     test(dataset)
 
     dataset = CharadesDataset(
-        ann_file='datadir/Charades_STA/charades_train.json',
-        vgg_feat_file="./datadir/Charades_STA/vgg_rgb_features.hdf5",
+        ann_file='data/Charades_STA/charades_train.json',
+        vgg_feat_file="./data/Charades_STA/Charades_vgg_rgb.hdf5",
+        c3d_feat_folder=None,
+        num_init_clips=64,
+        num_clips=32,
+        feat_type='vgg',
+    )
+    test(dataset)
+
+    dataset = CharadesDataset(
+        ann_file='data/Charades_STA/charades_test.json',
+        vgg_feat_file="./data/Charades_STA/Charades_vgg_rgb.hdf5",
         c3d_feat_folder=None,
         num_init_clips=64,
         num_clips=32,
