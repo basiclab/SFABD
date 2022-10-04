@@ -5,7 +5,7 @@ import torch
 from tqdm import tqdm
 from transformers import DistilBertTokenizer
 
-from mmn.utils import moment_to_iou2d, moments_to_iou2d, multi_vgg_feats, nms
+from mmn.utils import moment_to_iou2d, moments_to_iou2d, multi_vgg_feats
 
 
 class MultiTargetCharadesDataset(torch.utils.data.Dataset):
@@ -39,15 +39,11 @@ class MultiTargetCharadesDataset(torch.utils.data.Dataset):
         self,
         ann_file,
         vgg_feat_file,      # path to feature file
-        c3d_feat_folder,
         num_init_clips,     # number of small basic clips features. 32 for Charades (now 64)
         num_clips,
-        feat_type,          # `vgg` or `c3d` case insensitive
     ):
         self.vgg_feat_file = vgg_feat_file
-        self.c3d_feat_folder = c3d_feat_folder
         self.num_init_clips = num_init_clips
-        self.feat_type = feat_type
         self.tokenizer = DistilBertTokenizer.from_pretrained(
             "distilbert-base-uncased")
 
@@ -86,14 +82,11 @@ class MultiTargetCharadesDataset(torch.utils.data.Dataset):
             })
 
     def __getitem__(self, idx):
-        if self.feat_type.lower() == "vgg":
-            video_feats = multi_vgg_feats(
-                self.vgg_feat_file,
-                self.annos[idx]['vid'],
-                self.annos[idx]['seq_index'],
-                self.num_init_clips)                # [NUM_INIT_CLIPS, 4096]
-        else:
-            raise ValueError("Invalid feature type: {}".format(self.feat_type))
+        video_feats = multi_vgg_feats(
+            self.vgg_feat_file,
+            self.annos[idx]['vid'],
+            self.annos[idx]['seq_index'],
+            self.num_init_clips)                    # [NUM_INIT_CLIPS, 4096]
 
         return (
             video_feats,                            # pooled frame features
@@ -174,15 +167,11 @@ class CharadesDataset(MultiTargetCharadesDataset):
         self,
         ann_file,
         vgg_feat_file,      # path to feature file
-        c3d_feat_folder,
         num_init_clips,     # number of small basic clips features. 32 for Charades (now 64)
         num_clips,
-        feat_type,          # `vgg` or `c3d` case insensitive
     ):
         self.vgg_feat_file = vgg_feat_file
-        self.c3d_feat_folder = c3d_feat_folder
         self.num_init_clips = num_init_clips
-        self.feat_type = feat_type
         self.tokenizer = DistilBertTokenizer.from_pretrained(
             "distilbert-base-uncased")
 
@@ -246,39 +235,31 @@ if __name__ == '__main__':
     dataset = MultiTargetCharadesDataset(
         ann_file='data/Charades_STA/combined_charades_train_remove_repeat_action_videos.json',
         vgg_feat_file="./data/Charades_STA/vgg_rgb_features.hdf5",
-        c3d_feat_folder=None,
         num_init_clips=64,
         num_clips=32,
-        feat_type='vgg',
     )
     test(dataset)
 
     dataset = MultiTargetCharadesDataset(
         ann_file='data/Charades_STA/combined_charades_test.json',
         vgg_feat_file="./data/Charades_STA/vgg_rgb_features.hdf5",
-        c3d_feat_folder=None,
         num_init_clips=64,
         num_clips=32,
-        feat_type='vgg',
     )
     test(dataset)
 
     dataset = CharadesDataset(
         ann_file='data/Charades_STA/charades_train.json',
         vgg_feat_file="./data/Charades_STA/Charades_vgg_rgb.hdf5",
-        c3d_feat_folder=None,
         num_init_clips=64,
         num_clips=32,
-        feat_type='vgg',
     )
     test(dataset)
 
     dataset = CharadesDataset(
         ann_file='data/Charades_STA/charades_test.json',
         vgg_feat_file="./data/Charades_STA/Charades_vgg_rgb.hdf5",
-        c3d_feat_folder=None,
         num_init_clips=64,
         num_clips=32,
-        feat_type='vgg',
     )
     test(dataset)

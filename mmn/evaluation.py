@@ -10,7 +10,7 @@ device = torch.device('cuda:0')
 
 
 def metric_name(rec_n: int, iou_v: float) -> str:
-    return f'R@{rec_n:d},IoU@{iou_v:.01f}'
+    return f'R@{rec_n:d},IoU={iou_v:.01f}'
 
 
 def recall_table_to_dict(
