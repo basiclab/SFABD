@@ -6,13 +6,13 @@ import torch
 from torch import optim
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
+from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
-from mmn.evaluation import inference_loop, evaluate
-from mmn.losses import ContrastiveLoss, ScaledIoULoss
-from mmn.misc import set_seed, print_table, construct_class
-from mmn.models.main import MMN
+from src.evaluation import inference_loop, evaluate
+from src.losses import ContrastiveLoss, ScaledIoULoss
+from src.misc import set_seed, print_table, construct_class
+from src.models.model import MMN
 
 
 device = torch.device('cuda:0')
@@ -42,25 +42,14 @@ def write_recall_to_tensorboard(writer, recalls, step):
 
 def training_loop(
     seed: int,
-    # Dataset
-    TrainDataset: str,
-    train_ann_file: str,
-    train_template_file: str,
-    TestDataset: str,
-    test_ann_file: str,
-    vgg_feat_file: str,
-    num_init_clips: int,
-    # model
-    num_clips: int,
-    conv1d_in_channel: int,
-    conv1d_out_channel: int,
-    conv1d_pool_kernel_size: int,
-    conv1d_pool_kernel_stride: int,
-    conv2d_in_channel: int,
-    conv2d_hidden_channel: int,
-    conv2d_kernel_size: int,
-    conv2d_num_layers: int,
-    joint_space_size: int,
+    TrainDataset: str,      # Train dataset class name
+    train_ann_file: str,    # Train annotation file path
+    TestDataset: str,       # Test dataset class name
+    test_ann_file: str,     # Test annotation file path
+    feat_file: str,         # feature file path
+    feat_channel: int,      # feature channel size
+    num_init_clips: int,    # Number of initial clips
+    num_clips: int,         # Number of clips
     # iou loss
     min_iou: float,
     max_iou: float,
@@ -99,10 +88,10 @@ def training_loop(
     train_dataset = construct_class(
         TrainDataset,
         ann_file=train_ann_file,
-        template_file=train_template_file,
         num_clips=num_clips,
-        vgg_feat_file=vgg_feat_file,
+        feat_file=feat_file,
         num_init_clips=num_init_clips,
+        seed=seed,
     )
     train_loader = DataLoader(
         dataset=train_dataset,
@@ -117,8 +106,9 @@ def training_loop(
         TestDataset,
         ann_file=test_ann_file,
         num_clips=num_clips,
-        vgg_feat_file=vgg_feat_file,
+        feat_file=feat_file,
         num_init_clips=num_init_clips,
+        seed=seed,
     )
     test_loader = DataLoader(
         dataset=test_dataset,
@@ -138,18 +128,7 @@ def training_loop(
         intra=intra,
     )
 
-    model = MMN(
-        conv1d_in_channel=conv1d_in_channel,
-        conv1d_out_channel=conv1d_out_channel,
-        conv1d_pool_kerenl_size=conv1d_pool_kernel_size,
-        conv1d_pool_stride_size=conv1d_pool_kernel_stride,
-        conv2d_in_dim=num_clips,
-        conv2d_in_channel=conv2d_in_channel,
-        conv2d_hidden_channel=conv2d_hidden_channel,
-        conv2d_kernel_size=conv2d_kernel_size,
-        conv2d_num_layers=conv2d_num_layers,
-        joint_space_size=joint_space_size,
-    ).to(device)
+    model = MMN(feat_channel).to(device)
 
     # TODO: DDP
     bert_params = []

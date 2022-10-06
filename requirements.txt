@@ -2,6 +2,7 @@ click
 h5py
 tqdm
 tensorboard
+tensorboardX
 
 torch
 torchvision

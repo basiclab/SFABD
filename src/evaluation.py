@@ -3,7 +3,7 @@ from typing import List, Dict, Tuple
 import torch
 from tqdm import tqdm
 
-from mmn.utils import iou, nms, scores2d_to_moments_scores1d
+from src.utils import iou, nms, scores2d_to_moments_scores1d
 
 
 device = torch.device('cuda:0')
@@ -89,6 +89,7 @@ def evaluate(
                 'sents': batch['sents'][batch_idx],
                 'vid': batch['vid'][batch_idx],
                 'idx': batch['idx'][batch_idx].item(),
+                'target_moments': target_moments.tolist(),
             }
 
             output_moments, scores1d = scores2d_to_moments_scores1d(scores2d, duration)
@@ -98,11 +99,16 @@ def evaluate(
             # R@{rec_n}
             for rec_idx, rec_n in enumerate(rec_metrics):
                 max_ious = []                       # max iou for each target
+                best_moments = []
                 for target_moment in target_moments:
-                    max_iou = iou(target_moment, output_moments[:rec_n]).max()
-                    max_ious.append(max_iou)
+                    ious = iou(target_moment, output_moments[:rec_n])
+                    best_moments.append(output_moments[torch.argmax(ious)])
+                    max_ious.append(ious.max())
                 max_ious = torch.tensor(max_ious)   # [num_target]
-                eval_result['f"R@{rec_N},max_iou'] = max_ious.tolist()
+                eval_result[f'R@{rec_n:d}'] = {
+                    'best_moments': torch.stack(best_moments).tolist(),
+                    'max_ious': max_ious.mean().item(),
+                }
 
                 # R@{rec_n},IoU={iou_v}
                 for iou_idx, iou_v in enumerate(iou_metrics):
@@ -112,7 +118,7 @@ def evaluate(
 
                     eval_result[metric_name(rec_n, iou_v)] = {
                         'recall': recall.item(),
-                        'recall_mask': recall_mask.tolist()
+                        'true_positive_mask': recall_mask.tolist(),
                     }
             eval_results.append(eval_result)
     pbar.close()

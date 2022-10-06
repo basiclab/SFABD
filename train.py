@@ -1,34 +1,24 @@
 import click
 import torch.multiprocessing
 
-from mmn.training import training_loop
-from mmn.misc import CommandAwareConfig
+from src.training import training_loop
+from src.misc import CommandAwareConfig
 
 
 @click.command(cls=CommandAwareConfig('config'), context_settings={'show_default': True})
 @click.option('--config', default=None, type=str)
 @click.option('--seed', default=25285)
 # train dataset
-@click.option('--TrainDataset', "TrainDataset", default='mmn.datasets.MultiTargetCharades')
-@click.option('--train_ann_file', default="./data/Charades_STA/v1/combined_charades_train_remove_repeat_action_videos.json")
-@click.option('--train_template_file', default=None)
+@click.option('--TrainDataset', "TrainDataset", default='src.datasets.charades.dynamic.DynamicMultiTargetCharades')
+@click.option('--train_ann_file', default="./data/Charades_STA/v2/query_template_group_train.json")
 # test dataset
-@click.option('--TestDataset', "TestDataset", default='mmn.datasets.MultiTargetCharades')
-@click.option('--test_ann_file', default="./data/Charades_STA/v1/charades_multi_target.json")
+@click.option('--TestDataset', "TestDataset", default='src.datasets.charades.static.StaticMultiTargetCharades')
+@click.option('--test_ann_file', default="./data/Charades_STA/v2/00_percent/test.json")
 # dataset share
-@click.option('--vgg_feat_file', default="./data/Charades_STA/Charades_vgg_rgb.hdf5")
+@click.option('--feat_file', default="./data/Charades_STA/vgg_rgb_features_all.hdf5")
+@click.option('--feat_channel', default=4096)
 @click.option('--num_init_clips', default=64)
-# model
 @click.option('--num_clips', default=32)
-@click.option('--conv1d_in_channel', default=4096)
-@click.option('--conv1d_out_channel', default=512)
-@click.option('--conv1d_pool_kernel_size', default=2)
-@click.option('--conv1d_pool_kernel_stride', default=2)
-@click.option('--conv2d_in_channel', default=512)
-@click.option('--conv2d_hidden_channel', default=512)
-@click.option('--conv2d_kernel_size', default=5)
-@click.option('--conv2d_num_layers', default=8)
-@click.option('--joint_space_size', default=256)
 # iou loss
 @click.option('--min_iou', default=0.5)
 @click.option('--max_iou', default=1.0)
@@ -58,6 +48,7 @@ from mmn.misc import CommandAwareConfig
 @click.option('--logdir', required=True, type=str)
 def main(**kwargs):
     del kwargs['config']
+
     # https://github.com/facebookresearch/maskrcnn-benchmark/issues/103#issuecomment-785815218
     torch.multiprocessing.set_sharing_strategy('file_system')
 

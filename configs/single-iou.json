@@ -1,0 +1,38 @@
+{
+    "TrainDataset": "src.datasets.charades.base.Charades",
+    "train_ann_file": "./data/Charades_STA/new/00_percent/train.json",
+    "TestDataset": "src.datasets.charades.base.Charades",
+    "test_ann_file": "./data/Charades_STA/new/00_percent/test.json",
+    "feat_file": "./data/Charades_STA/vgg_rgb_features_all.hdf5",
+    "feat_channel": 4096,
+    "num_init_clips": 64,
+    "num_clips": 32,
+    "min_iou": 0.5,
+    "max_iou": 1.0,
+    "iou_weight": 1.0,
+    "tau_video": 0.1,
+    "tau_query": 0.1,
+    "neg_video_iou": 0.5,
+    "pos_video_topk": 1,
+    "inter": false,
+    "intra": false,
+    "margin": 0.4,
+    "contrastive_weight": 0.0,
+    "base_lr": 0.0001,
+    "bert_lr": 1e-05,
+    "batch_size": 24,
+    "epochs": 7,
+    "bert_freeze_epoch": 0,
+    "clip_grad_norm": 5.0,
+    "test_batch_size": 64,
+    "nms_threshold": 0.5,
+    "rec_metrics": [
+        1,
+        5,
+        10
+    ],
+    "iou_metrics": [
+        0.5,
+        0.7
+    ]
+}

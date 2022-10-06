@@ -17,10 +17,9 @@ def CommandAwareConfig(config_param_name):
             with open(config_file) as f:
                 configs = json.load(f)
             for param in ctx.params.keys():
-                if ctx.get_parameter_source(param) != click.core.ParameterSource.DEFAULT:
-                    continue
                 if param in configs:
-                    ctx.params[param] = configs[param]
+                    if ctx.get_parameter_source(param) == click.core.ParameterSource.DEFAULT:
+                        ctx.params[param] = configs[param]
             return super(CustomCommandClass, self).invoke(ctx)
     return CustomCommandClass
 

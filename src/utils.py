@@ -1,8 +1,6 @@
-from typing import List, Tuple
+from typing import Tuple
 
-import h5py
 import torch
-import torch.nn.functional as F
 
 
 def iou(
@@ -95,99 +93,36 @@ def moments_to_iou2d(
     for target_moment in target_moments:
         iou2d = moment_to_iou2d(target_moment, num_clips, duration)
         iou2ds.append(iou2d)
-    iou2ds = torch.stack(iou2ds)                    # [?, D, D]
-    iou2d_sum = iou2ds.sum(dim=0, keepdim=True)     # [D, D]
-    iou2ds = iou2ds - (iou2d_sum - iou2ds)          # [?, D, D]
-    iou2ds = iou2ds * (iou2ds > 0.5)                # [?, D, D]
-    iou2d = iou2ds.sum(dim=0)                       # [D, D]
+    # # old method
+    # iou2ds = torch.stack(iou2ds)                    # [?, D, D]
+    # iou2d_sum = iou2ds.sum(dim=0, keepdim=True)     # [D, D]
+    # iou2ds = iou2ds - (iou2d_sum - iou2ds)          # [?, D, D]
+    # iou2ds = iou2ds * (iou2ds > 0.5)                # [?, D, D]
+    # iou2d = iou2ds.sum(dim=0)                       # [D, D]
+    # new method
+    iou2d = torch.stack(iou2ds).max(dim=0)[0]       # [D, D]
+
     return iou2d
 
 
-def vgg_feats(
-    feat_file: str,                             # path to h5 file
-    vid: str,                                   # video id
-    num_init_clips: int,                        # target dimension
-):
-    with h5py.File(feat_file, 'r') as f:
-        feats = f[vid][:]
-        feats = torch.from_numpy(feats).float()
-    return aggregate_feats(feats, num_init_clips, op_type='avg')
-
-
-def c3d_feats(
-    feat_folder: str,                           # path to feature folder
-    vid: str,                                   # video id
-    num_init_clips: int,                        # target dimension
-) -> torch.Tensor:
-    feats = torch.load(f"{feat_folder}/{vid}.pt")
-
-    return aggregate_feats(feats, num_init_clips, op_type='avg')
-
-
-def multi_vgg_feats(
-    feat_file: str,                             # path to h5 file
-    vids: List[str],                            # list of video ids
-    seq_timestamps: List[Tuple[float, float]],  # list of (start, end) timestamps
-    num_init_clips: int,                        # target dimension
-) -> torch.Tensor:
-    assert len(vids) == len(seq_timestamps)
-
-    with h5py.File(feat_file, 'r') as f:
-        feats = []
-        for vid, (seq_start, seq_end) in zip(vids, seq_timestamps):
-            feat = f[vid][seq_start: seq_end]
-            feats.append(torch.from_numpy(feat).float())
-        feats = torch.cat(feats, dim=0)
-
-    return aggregate_feats(feats, num_init_clips, op_type='avg')
-
-
-def multi_c3d_feats(
-    feat_folder: str,                           # path to feature folder
-    vids: List[int],                            # list of video ids
-    seq_timestamps: List[Tuple[float, float]],  # list of (start, end) timestamps
-    num_init_clips: int,                        # target dimension
-) -> torch.Tensor:
-    assert len(vids) == len(seq_timestamps)
-
-    feats = []
-    for vid, (seq_start, seq_end) in zip(vids, seq_timestamps):
-        feat = torch.load(f"{feat_folder}/{vid}.pt")
-        feat = feat[seq_start:seq_end]
-        feats.append(feat)
-    feats = torch.cat(feats, dim=0)
-
-    return aggregate_feats(feats, num_init_clips, op_type='avg')
-
-
-def aggregate_feats(
-    feats: torch.Tensor,                        # [NUM_SRC_CLIPS, C]
-    num_tgt_clips: int,                         # number of target clip
-    op_type: str = 'avg',                       # 'avg' or 'max'
-) -> torch.Tensor:
-    """Produce the feature of per video into fixed shape by averaging.
+def piror(dataset: torch.utils.data.Dataset):
+    """Calculate the prior distribution of the dataset.
 
     Returns:
-        avgfeats: [C, num_tgt_clips]
+        prior: [num_clips, num_clips]
     """
-    assert op_type in ['avg', 'max']
+    iou2ds_all = []
+    for data_dict in dataset:
+        iou2ds_all.append(data_dict['iou2ds'])
+    iou2ds = torch.cat(iou2ds_all, dim=0)                       # [?, D, D]
+    N, D, _ = iou2ds.shape
+    iou2ds = iou2ds.view(N, -1)
+    mask = iou2ds == iou2ds.max(dim=1, keepdim=True).values     # [N, D*D]
+    heatmap = mask.float().view(D, D).sum(dim=0)                # [D, D]
+    heatmap = heatmap / heatmap.max()                           # [D, D]
 
-    num_src_clips, _ = feats.shape
-    idxs = torch.arange(0, num_tgt_clips + 1) / num_tgt_clips * num_src_clips
-    idxs = idxs.round().long().clamp(max=num_src_clips - 1)
-    feats = F.normalize(feats, dim=1)
-    feats_bucket = []
-    for i in range(num_tgt_clips):
-        s, e = idxs[i], idxs[i + 1]
-        # To prevent an empty selection, check the indices are valid.
-        if s < e:
-            if op_type == 'avg':
-                feats_bucket.append(feats[s:e].mean(dim=0))
-            if op_type == 'max':
-                feats_bucket.append(feats[s:e].max(dim=0)[0])
-        else:
-            feats_bucket.append(feats[s])
-    return torch.stack(feats_bucket, dim=1)                     # channel first
+    assert (mask.sum(dim=1) == 1).all()  # each iou2d has only one max value
+    return heatmap
 
 
 if __name__ == '__main__':

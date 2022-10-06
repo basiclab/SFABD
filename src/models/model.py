@@ -2,66 +2,21 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from mmn.models.text import LanguageModel
-from mmn.models.proposal import ProposalConv
-
-
-class Conv1dPool(nn.Module):
-    def __init__(self, in_channel, out_channel, pool_kernel_size, pool_stride_size):
-        super().__init__()
-        self.model = nn.Sequential(
-            nn.Conv1d(in_channel, out_channel, 1, 1),
-            nn.ReLU(inplace=True),
-            nn.AvgPool1d(pool_kernel_size, pool_stride_size),
-        )
-
-    def forward(
-        self,
-        x: torch.Tensor         # [B, C, NUM_INIT_CLIPS]
-    ):
-        """
-            B: (B)atch size
-            C: (C)hannel = JOINT_SPACE_SIZE
-            D: (D)imension of prorposal matrix = NUM_CLIPS
-        """
-        x = self.model(x)       # [B, C, D]
-        return x
-
-
-class ProposalPool(nn.Module):
-    def forward(self, x: torch.Tensor):
-        """
-            B: (B)atch size
-            C: (C)hannel = JOINT_SPACE_SIZE
-            D: (D)imension of prorposal matrix = NUM_CLIPS
-        """
-        B, C, D = x.shape
-        zero = x.new_zeros(B, C)
-        x2d = []
-        for i in range(D):
-            for j in range(D):
-                if i <= j:
-                    x2d.append(x[:, :, i: j + 1].max(dim=2).values)
-                else:
-                    x2d.append(zero)
-
-        x2d = torch.stack(x2d, dim=-1).view(B, C, D, D)
-        return x2d
+from src.models.modules import (
+    Conv1dPool, ProposalPool, ProposalConv, LanguageModel)
 
 
 class MMN(nn.Module):
     def __init__(
         self,
-        conv1d_in_channel: int,         # Conv1dPool
-        conv1d_out_channel: int,        # Conv1dPool
-        conv1d_pool_kerenl_size: int,   # Conv1dPool
-        conv1d_pool_stride_size: int,   # Conv1dPool
-        conv2d_in_dim: int,             # ProposalConv
-        conv2d_in_channel: int,         # ProposalConv
-        conv2d_hidden_channel: int,     # ProposalConv
-        conv2d_kernel_size: int,        # ProposalConv
-        conv2d_num_layers: int,         # ProposalConv
-        joint_space_size: int,
+        in_channel: int,                    # Conv1dPool
+        conv1d_out_channel: int = 512,      # Conv1dPool
+        conv1d_pool_kerenl_size: int = 2,   # Conv1dPool
+        conv1d_pool_stride_size: int = 2,   # Conv1dPool
+        conv2d_hidden_channel: int = 512,   # ProposalConv
+        conv2d_kernel_size: int = 5,        # ProposalConv
+        conv2d_num_layers: int = 8,         # ProposalConv
+        joint_space_size: int = 256,
     ):
         """
             B: (B)atch size
@@ -71,15 +26,14 @@ class MMN(nn.Module):
         super(MMN, self).__init__()
         self.video_model = nn.Sequential(
             Conv1dPool(                                     # [B, C, NUM_INIT_CLIPS]
-                conv1d_in_channel,
+                in_channel,
                 conv1d_out_channel,
                 conv1d_pool_kerenl_size,
                 conv1d_pool_stride_size,
             ),                                              # [B, C, D]
             ProposalPool(),                                 # [B, C, D, D]
             ProposalConv(
-                conv2d_in_dim,
-                conv2d_in_channel,
+                conv1d_out_channel,
                 conv2d_hidden_channel,
                 joint_space_size,
                 conv2d_kernel_size,
