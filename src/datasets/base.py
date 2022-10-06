@@ -160,7 +160,7 @@ if __name__ == '__main__':
 
     print("CharadesSTA train")
     dataset = Charades(
-        ann_file='data/CharadesSTA/train.json',
+        ann_file='data/CharadesSTA/original/train.json',
         num_clips=32,
         feat_file="./data/CharadesSTA/vgg_rgb_features.hdf5",
         num_init_clips=64,
@@ -169,7 +169,7 @@ if __name__ == '__main__':
 
     print("CharadesSTA test")
     dataset = Charades(
-        ann_file='data/CharadesSTA/test.json',
+        ann_file='data/CharadesSTA/original/test.json',
         num_clips=32,
         feat_file="./data/CharadesSTA/vgg_rgb_features.hdf5",
         num_init_clips=64,

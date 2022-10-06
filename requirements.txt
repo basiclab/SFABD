@@ -3,6 +3,7 @@ h5py
 tqdm
 tensorboard
 tensorboardX
+transformers
 
 torch
 torchvision

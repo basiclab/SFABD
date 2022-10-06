@@ -85,7 +85,7 @@ class DynamicCharades(CharadesBase):
             clip['moment'][1] - clip['moment'][0] for clip in clips)
 
         # sample duration. Note that this is not the final duration, since
-        # the individual clip duration is not always enough to
+        # the individual clip duration is not always enough.
         diff = self.duration_upp - self.duration_low
         duration = torch.rand(()) * diff + self.duration_low
         remain = duration - min_duration
