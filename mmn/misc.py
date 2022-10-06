@@ -1,5 +1,6 @@
-import random
+import importlib
 import json
+import random
 from typing import Dict
 
 import click
@@ -31,6 +32,11 @@ def set_seed(seed: int):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+
+def construct_class(module, *args, **kwargs):
+    module, class_name = module.rsplit('.', maxsplit=1)
+    return getattr(importlib.import_module(module), class_name)(*args, **kwargs)
 
 
 def print_table(

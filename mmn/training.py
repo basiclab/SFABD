@@ -9,10 +9,9 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from mmn.datasets import MultiTargetCharadesDataset
 from mmn.evaluation import inference_loop, evaluate
 from mmn.losses import ContrastiveLoss, ScaledIoULoss
-from mmn.misc import set_seed, print_table
+from mmn.misc import set_seed, print_table, construct_class
 from mmn.models.main import MMN
 
 
@@ -43,10 +42,15 @@ def write_recall_to_tensorboard(writer, recalls, step):
 
 def training_loop(
     seed: int,
+    # Dataset
+    TrainDataset: str,
     train_ann_file: str,
+    train_template_file: str,
+    TestDataset: str,
     test_ann_file: str,
     vgg_feat_file: str,
     num_init_clips: int,
+    # model
     num_clips: int,
     conv1d_in_channel: int,
     conv1d_out_channel: int,
@@ -57,25 +61,32 @@ def training_loop(
     conv2d_kernel_size: int,
     conv2d_num_layers: int,
     joint_space_size: int,
+    # iou loss
     min_iou: float,
     max_iou: float,
     iou_weight: float,
+    # contrastive loss
     tau_video: float,
     tau_query: float,
     neg_video_iou: float,
     pos_video_topk: int,
+    inter: bool,
+    intra: bool,
     margin: float,
     contrastive_weight: float,
+    # optimizer
     base_lr: float,
     bert_lr: float,
     batch_size: int,
     epochs: int,
     bert_freeze_epoch: int,
     clip_grad_norm: float,
+    # test
     test_batch_size: int,
     nms_threshold: float,
     rec_metrics: List[float],
     iou_metrics: List[float],
+    # logging
     logdir: str,
     kwargs: Dict,
 ):
@@ -85,11 +96,13 @@ def training_loop(
     writer = SummaryWriter(os.path.join(logdir, "train"))
     test_writer = SummaryWriter(os.path.join(logdir, "test"))
 
-    train_dataset = MultiTargetCharadesDataset(
+    train_dataset = construct_class(
+        TrainDataset,
         ann_file=train_ann_file,
+        template_file=train_template_file,
+        num_clips=num_clips,
         vgg_feat_file=vgg_feat_file,
         num_init_clips=num_init_clips,
-        num_clips=num_clips,
     )
     train_loader = DataLoader(
         dataset=train_dataset,
@@ -100,11 +113,12 @@ def training_loop(
         drop_last=True,
     )
 
-    test_dataset = MultiTargetCharadesDataset(
+    test_dataset = construct_class(
+        TestDataset,
         ann_file=test_ann_file,
+        num_clips=num_clips,
         vgg_feat_file=vgg_feat_file,
         num_init_clips=num_init_clips,
-        num_clips=num_clips,
     )
     test_loader = DataLoader(
         dataset=test_dataset,
@@ -120,6 +134,8 @@ def training_loop(
         T_q=tau_query,
         neg_video_iou=neg_video_iou,
         pos_video_topk=pos_video_topk,
+        inter=inter,
+        intra=intra,
     )
 
     model = MMN(

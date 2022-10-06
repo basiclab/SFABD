@@ -104,13 +104,13 @@ def evaluate(
                 max_ious = torch.tensor(max_ious)   # [num_target]
                 eval_result['f"R@{rec_N},max_iou'] = max_ious.tolist()
 
-                # R@{rec_n}, IoU@{iou_v}
+                # R@{rec_n},IoU={iou_v}
                 for iou_idx, iou_v in enumerate(iou_metrics):
                     recall_mask = max_ious >= iou_v
                     recall = recall_mask.float().mean()
                     recall_tables[num_target, rec_idx, iou_idx] += recall
 
-                    eval_result[f"R@{rec_n},IoU={iou_v:.01f}"] = {
+                    eval_result[metric_name(rec_n, iou_v)] = {
                         'recall': recall.item(),
                         'recall_mask': recall_mask.tolist()
                     }
