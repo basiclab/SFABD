@@ -9,13 +9,13 @@ from src.misc import CommandAwareConfig
 @click.option('--config', default=None, type=str)
 @click.option('--seed', default=25285)
 # train dataset
-@click.option('--TrainDataset', "TrainDataset", default='src.datasets.charades.dynamic.DynamicMultiTargetCharades')
-@click.option('--train_ann_file', default="./data/Charades_STA/v2/query_template_group_train.json")
+@click.option('--TrainDataset', "TrainDataset", default='src.datasets.charades.base.Charades')
+@click.option('--train_ann_file', default="./data/CharadesSTA/train.json")
 # test dataset
-@click.option('--TestDataset', "TestDataset", default='src.datasets.charades.static.StaticMultiTargetCharades')
-@click.option('--test_ann_file', default="./data/Charades_STA/v2/00_percent/test.json")
+@click.option('--TestDataset', "TestDataset", default='src.datasets.charades.base.Charades')
+@click.option('--test_ann_file', default="./data/CharadesSTA/test.json")
 # dataset share
-@click.option('--feat_file', default="./data/Charades_STA/vgg_rgb_features_all.hdf5")
+@click.option('--feat_file', default="./data/CharadesSTA/vgg_rgb_features_all.hdf5")
 @click.option('--feat_channel', default=4096)
 @click.option('--num_init_clips', default=64)
 @click.option('--num_clips', default=32)
@@ -29,13 +29,13 @@ from src.misc import CommandAwareConfig
 @click.option('--neg_video_iou', default=0.5)
 @click.option('--pos_video_topk', default=1)
 @click.option('--inter/--no-inter', is_flag=True, default=True)
-@click.option('--intra/--no-intra', is_flag=True, default=True)
+@click.option('--intra/--no-intra', is_flag=True, default=False)
 @click.option('--margin', default=0.4)
-@click.option('--contrastive_weight', default=0.1)
+@click.option('--contrastive_weight', default=0.05)
 # optimizer
 @click.option('--base_lr', default=1e-4)
 @click.option('--bert_lr', default=1e-5)
-@click.option('--batch_size', default=24)
+@click.option('--batch_size', default=48)
 @click.option('--epochs', default=7)
 @click.option('--bert_freeze_epoch', default=0)
 @click.option('--clip_grad_norm', default=5.0)
@@ -45,7 +45,7 @@ from src.misc import CommandAwareConfig
 @click.option('--rec_metrics', default=[1, 5, 10], multiple=True)
 @click.option('--iou_metrics', default=[0.5, 0.7], multiple=True)
 # logging
-@click.option('--logdir', required=True, type=str)
+@click.option('--logdir', default="./logs/test", type=str)
 def main(**kwargs):
     del kwargs['config']
 

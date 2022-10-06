@@ -1,8 +1,8 @@
 {
     "TrainDataset": "src.datasets.charades.base.Charades",
-    "train_ann_file": "./data/CharadesSTA/new/00_percent/train.json",
+    "train_ann_file": "./data/CharadesSTA/original/train.json",
     "TestDataset": "src.datasets.charades.base.Charades",
-    "test_ann_file": "./data/CharadesSTA/new/00_percent/test.json",
+    "test_ann_file": "./data/CharadesSTA/original/test.json",
     "feat_file": "./data/CharadesSTA/vgg_rgb_features_all.hdf5",
     "feat_channel": 4096,
     "num_init_clips": 64,
@@ -27,5 +27,6 @@
     "test_batch_size": 64,
     "nms_threshold": 0.5,
     "rec_metrics": [1, 5, 10],
-    "iou_metrics": [0.5, 0.7]
+    "iou_metrics": [0.5, 0.7],
+    "logdir": "./logs/baseline-iou"
 }

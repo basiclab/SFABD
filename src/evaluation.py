@@ -123,10 +123,12 @@ def evaluate(
             eval_results.append(eval_result)
     pbar.close()
 
-    recall_table_all_target = recall_tables.sum(0) / num_instances.sum()
-    recall_table_multi_target = recall_tables[1:].sum(0) / num_instances[1:].sum()
+    recall_table_all_target = (
+        recall_tables.sum(0) / num_instances.sum().clamp(min=1))
+    recall_table_multi_target = (
+        recall_tables[1:].sum(0) / num_instances[1:].sum().clamp(min=1))
     for num_target in range(len(recall_tables)):
-        recall_tables[num_target] /= num_instances[num_target]
+        recall_tables[num_target] /= num_instances[num_target].clamp(min=1)
 
     recalls = {
         "all-target": recall_table_to_dict(
@@ -141,6 +143,20 @@ def evaluate(
     return recalls, eval_results
 
 
+def evaluate_loss(
+    results: List[Dict],
+    loss_fn: torch.nn.Module,
+) -> torch.Tensor:
+    loss_sum = 0
+    counter = 0
+    for batch in results:
+        scores2d = batch['scores2d']
+        iou2d = batch['iou2d']
+        loss_sum += loss_fn(scores2d, iou2d) * len(scores2d)
+        counter += len(scores2d)
+    return loss_sum / counter
+
+
 def inference_loop(
     model: torch.nn.Module,
     loader: torch.utils.data.DataLoader,
@@ -153,6 +169,7 @@ def inference_loop(
             *_, scores2d = model(**batch)
         results.append({
             'scores2d': scores2d.cpu(),
+            'iou2d': batch['iou2d'].cpu(),
             **info,
         })
     return results

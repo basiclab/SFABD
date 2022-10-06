@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
-from src.evaluation import inference_loop, evaluate
+from src.evaluation import inference_loop, evaluate, evaluate_loss
 from src.losses import ContrastiveLoss, ScaledIoULoss
 from src.misc import set_seed, print_table, construct_class
 from src.models.model import MMN
@@ -32,7 +32,7 @@ def write_recall_to_file(path, train_recalls, test_recalls, step, epoch):
     json.dump(history, open(path, 'w'), indent=4)
 
 
-def write_recall_to_tensorboard(writer, recalls, step):
+def write_recall_to_tensorboard(writer: SummaryWriter, recalls, step):
     for target_name, recall in recalls.items():
         for metric_name, value in recall.items():
             writer.add_scalar(
@@ -118,12 +118,13 @@ def training_loop(
         num_workers=min(torch.get_num_threads(), 8),
     )
 
-    loss_bce_fn = ScaledIoULoss(min_iou, max_iou)
+    loss_iou_fn = ScaledIoULoss(min_iou, max_iou)
     loss_con_fn = ContrastiveLoss(
         T_v=tau_video,
         T_q=tau_query,
         neg_video_iou=neg_video_iou,
         pos_video_topk=pos_video_topk,
+        margin=margin,
         inter=inter,
         intra=intra,
     )
@@ -152,6 +153,8 @@ def training_loop(
         rec_metrics,
         iou_metrics,
     )
+    loss = evaluate_loss(test_results, loss_iou_fn)
+    test_writer.add_scalar('loss/iou', loss, 0)
     write_recall_to_tensorboard(test_writer, test_recalls, step=0)
     print_table(epoch=0, recalls_dict={'test': test_recalls})
 
@@ -181,7 +184,7 @@ def training_loop(
             batch = {key: value.to(device) for key, value in batch.items()}
             video_feats, query_feats, sents_feats, scores2d = model(**batch)
 
-            loss_iou = loss_bce_fn(scores2d, batch["iou2d"])
+            loss_iou = loss_iou_fn(scores2d, batch["iou2d"])
             if contrastive_weight != 0:
                 (
                     loss_inter_video,
@@ -262,7 +265,9 @@ def training_loop(
             rec_metrics,
             iou_metrics,
         )
+        test_loss = evaluate_loss(test_results, loss_iou_fn)
         # save testing recall to tensorboard
+        test_writer.add_scalar('loss/iou', test_loss, step)
         write_recall_to_tensorboard(test_writer, test_recalls, step)
 
         # save evaluation results to file

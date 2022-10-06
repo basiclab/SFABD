@@ -158,59 +158,59 @@ if __name__ == '__main__':
             print(f"{k:<{name_length}s}: {len(v)}")
         print('-' * 80)
 
-    # print("CharadesSTA train")
-    # dataset = Charades(
-    #     ann_file='data/Charades_STA/train.json',
-    #     num_clips=32,
-    #     feat_file="./data/Charades_STA/vgg_rgb_features.hdf5",
-    #     num_init_clips=64,
-    # )
-    # test(dataset)
+    print("CharadesSTA train")
+    dataset = Charades(
+        ann_file='data/CharadesSTA/train.json',
+        num_clips=32,
+        feat_file="./data/CharadesSTA/vgg_rgb_features.hdf5",
+        num_init_clips=64,
+    )
+    test(dataset)
 
-    # print("CharadesSTA test")
-    # dataset = Charades(
-    #     ann_file='data/Charades_STA/test.json',
-    #     num_clips=32,
-    #     feat_file="./data/Charades_STA/vgg_rgb_features.hdf5",
-    #     num_init_clips=64,
-    # )
-    # test(dataset)
+    print("CharadesSTA test")
+    dataset = Charades(
+        ann_file='data/CharadesSTA/test.json',
+        num_clips=32,
+        feat_file="./data/CharadesSTA/vgg_rgb_features.hdf5",
+        num_init_clips=64,
+    )
+    test(dataset)
 
-    # print("Dynamic Multi-target train")
-    # dataset = DynamicCharades(
-    #     ann_file='data/Charades_STA/new/query_template_group_train.json',
-    #     num_clips=32,
-    #     feat_file="./data/Charades_STA/vgg_rgb_features_all.hdf5",
-    #     num_init_clips=64,
-    # )
-    # test(dataset)
+    print("Dynamic Multi-target train")
+    dataset = DynamicCharades(
+        ann_file='data/CharadesSTA/new/query_template_group_train.json',
+        num_clips=32,
+        feat_file="./data/CharadesSTA/vgg_rgb_features_all.hdf5",
+        num_init_clips=64,
+    )
+    test(dataset)
 
-    # print("Real Multi-target test")
-    # dataset = Charades(
-    #     ann_file='data/Charades_STA/new/00_percent/test.json',
-    #     num_clips=32,
-    #     feat_file="./data/Charades_STA/vgg_rgb_features_all.hdf5",
-    #     num_init_clips=64,
-    # )
-    # test(dataset)
+    print("Real Multi-target test")
+    dataset = Charades(
+        ann_file='data/CharadesSTA/new/00_percent/test.json',
+        num_clips=32,
+        feat_file="./data/CharadesSTA/vgg_rgb_features_all.hdf5",
+        num_init_clips=64,
+    )
+    test(dataset)
 
-    # print("Real Single-target train")
-    # dataset = Charades(
-    #     ann_file='data/Charades_STA/new/00_percent/train.json',
-    #     num_clips=32,
-    #     feat_file="./data/Charades_STA/vgg_rgb_features_all.hdf5",
-    #     num_init_clips=64,
-    # )
-    # test(dataset)
+    print("Real Single-target train")
+    dataset = Charades(
+        ann_file='data/CharadesSTA/new/00_percent/train.json',
+        num_clips=32,
+        feat_file="./data/CharadesSTA/vgg_rgb_features_all.hdf5",
+        num_init_clips=64,
+    )
+    test(dataset)
 
-    # print("Static Multi-target train")
-    # dataset = StaticCharades(
-    #     ann_file='data/Charades_STA/new/query_template_group_train.json',
-    #     num_clips=32,
-    #     feat_file="./data/Charades_STA/vgg_rgb_features_all.hdf5",
-    #     num_init_clips=64,
-    # )
-    # test(dataset)
+    print("Static Multi-target train")
+    dataset = StaticCharades(
+        ann_file='data/CharadesSTA/new/query_template_group_train.json',
+        num_clips=32,
+        feat_file="./data/CharadesSTA/vgg_rgb_features_all.hdf5",
+        num_init_clips=64,
+    )
+    test(dataset)
 
     print("ActivityNet train")
     dataset = ActivityNet(

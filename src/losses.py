@@ -42,6 +42,7 @@ class ContrastiveLoss(nn.Module):
         T_q: float = 0.1,
         neg_video_iou: float = 0.5,
         pos_video_topk: int = 1,
+        margin: float = 0,
         intra: bool = True,
         inter: bool = True,
     ):
@@ -50,6 +51,7 @@ class ContrastiveLoss(nn.Module):
         self.T_q = T_q                          # 0.1
         self.neg_video_iou = neg_video_iou      # 0.5
         self.pos_video_topk = pos_video_topk    # 1
+        self.margin = margin
         self.intra = intra
         self.inter = inter
 
@@ -141,6 +143,7 @@ class ContrastiveLoss(nn.Module):
                 inter_video_all,                            # [T, K, B]
                 inter_video_neg_mask,                       # [T, 1, B]
                 self.T_v,
+                self.margin,
             )
             losses.append(loss_inter_video)
         else:
@@ -169,6 +172,7 @@ class ContrastiveLoss(nn.Module):
                 inter_query_all,                            # [T, 1, B * P]
                 inter_query_neg_mask,                       # [T, 1, B * P]
                 self.T_q,
+                self.margin,
             )
             losses.append(loss_inter_query)
         else:
@@ -206,6 +210,7 @@ class ContrastiveLoss(nn.Module):
                 intra_video_all[ref_idx],                           # [E, P]
                 intra_video_neg_mask[ref_idx],                      # [E, P]
                 self.T_v,
+                self.margin,
             )
             losses.append(loss_intra_video)
         else:
@@ -238,6 +243,7 @@ class ContrastiveLoss(nn.Module):
                 intra_query_all[scatter_idx],                       # [T', B']
                 intra_query_neg_mask[scatter_idx],                  # [T', B']
                 self.T_q,
+                self.margin,
             )
             losses.append(loss_intra_query)
         else:

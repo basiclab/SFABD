@@ -14,7 +14,7 @@ class DynamicCharades(CharadesBase):
         num_clips,                      # number of final clips for each video
         feat_file,                      # path to feature file
         num_init_clips,                 # number of small basic clips features. ex. 64 for Charades
-        weights=[0.5, 0.4, 0.1],        # sample rate for each number of targets
+        weights=[1.0, 0.0, 0.0],        # sample rate for each number of targets
         duration_low=30,                # duration sampling lower bound
         duration_upp=40,                # duration sampling upper bound
         seed=0,
