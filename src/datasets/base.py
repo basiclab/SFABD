@@ -1,43 +1,77 @@
-from math import ceil, floor
+import json
 from typing import List, Dict, Tuple
 
-import h5py
 import torch
 import torch.nn.functional as F
+from tqdm import tqdm
 from transformers import DistilBertTokenizer
+
+import src.dist as dist
+from src.utils import moment_to_iou2d
 
 
 class CollateBase(torch.utils.data.Dataset):
-    def __init__(self):
+    def __init__(
+        self,
+        # annotation related
+        ann_file,           # path to statically generated multi-target annotation file
+        num_clips,          # number of final clips, e.g., 32 for Charades
+        **dummy,
+    ):
+        self.num_clips = num_clips
         self.tokenizer = DistilBertTokenizer.from_pretrained(
             "distilbert-base-uncased")
-
-    def get_anno(self, idx):
-        """Get annotation for a given index.
-        Returns:
-            anno: {
-                'vid': List[str],
-                'query': str,
-                'sents': List[str],
-                'iou2d': torch.Tensor,
-                'iou2ds': List[torch.Tensor],
-                'num_targets': torch.Tensor,
-                'moments': List[torch.Tensor],
-                'duration': torch.Tensor,
-            }
-        """
-        raise NotImplementedError
+        self.annos = self.parse_anno(ann_file)
 
     def get_feat(self, anno):
         raise NotImplementedError
 
-    def __getitem__(self, idx):
-        anno = self.get_anno(idx)
-        video_feats = self.get_feat(anno)           # [NUM_INIT_CLIPS, 4096]
+    def get_duration(self, anno):
+        return anno['duration']
 
+    def parse_anno(self, ann_file):
+        with open(ann_file, 'r') as f:
+            raw_annos = json.load(f)
+
+        annos = []
+        desc = self.__class__.__name__
+        with tqdm(raw_annos.items(), ncols=0, leave=False, desc=desc,
+                  disable=not dist.is_main()) as pbar:
+            for vid, anno in pbar:
+                timestamps = anno['timestamps']
+                sentences = anno['sentences']
+                duration = self.get_duration(anno)  # video length
+                moments = []                        # start and end time of each moment
+                sents = []                          # sentence for each moment
+                for (start, end), sent in zip(timestamps, sentences):
+                    moment = torch.Tensor([max(start, 0), min(end, duration)])
+                    if moment[0] < moment[1]:
+                        moments.append(moment / duration)
+                        sents.append(sent)
+                if len(moments) == 0:
+                    continue
+                moments = torch.stack(moments, dim=0)
+                num_targets = torch.tensor(len(moments))
+
+                annos.append({
+                    'vid': vid,
+                    'sents': sents,                         # original sentences
+                    'num_targets': num_targets,             # number of target moments
+                    'moments': moments,                     # clips moments in seconds
+                    'duration': torch.tensor(duration),     # video length in seconds
+                })
+        return annos
+
+    def __len__(self):
+        return len(self.annos)
+
+    def __getitem__(self, idx):
+        anno = self.annos[idx]
+        video_feats = self.get_feat(anno)                   # [NUM_INIT_CLIPS, 4096]
+        idx = torch.ones(anno['num_targets'].item()) * idx  # [NUM_TARGETS]
         return {
-            'idx': idx,                             # index
-            'video_feats': video_feats,             # pooled frame features
+            'idxs': idx,
+            'video_feats': video_feats,
             **anno,
         }
 
@@ -49,41 +83,24 @@ class CollateBase(torch.utils.data.Dataset):
             key: [x[key] for x in batch] for key in batch[0].keys()
         }
 
-        num_targets = torch.stack(batch['num_targets'], dim=0)
-
-        query = self.tokenizer(
-            batch['query'],
-            padding=True,
-            return_tensors="pt",
-            return_length=True)
         sents = self.tokenizer(
             sum(batch['sents'], []),    # List of List of str -> List of str
             padding=True,
             return_tensors="pt",
             return_length=True)
 
-        return (
-            # must contain only tensors
-            {
-                'video_feats': torch.stack(batch['video_feats'], dim=0),
-                'query_tokens': query['input_ids'],
-                'query_length': query['length'],
-                'iou2d': torch.stack(batch['iou2d'], dim=0),
-                'iou2ds': torch.cat(batch['iou2ds'], dim=0),
-                'sents_tokens': sents['input_ids'],
-                'sents_length': sents['length'],
-                'num_targets': num_targets,
-            },
-            # for evaluation
-            {
-                'query': batch['query'],                            # List[str]
-                'sents': batch['sents'],                            # List[List[str]]
-                'moments': batch['moments'],                        # List[torch.Tensor]
-                'duration': torch.stack(batch['duration'], dim=0),  # torch.Tensor
-                'vid': batch['vids'],                               # List[str]
-                'idx': torch.tensor(batch['idx']),                  # torch.Tensor
-            }
-        )
+        moments = torch.cat(batch['moments'], dim=0)
+        iou2ds = moment_to_iou2d(moments, self.num_clips)
+
+        return {
+            'video_feats': torch.stack(batch['video_feats'], dim=0),
+            'sents_tokens': sents['input_ids'],
+            'sents_length': sents['length'],
+            'iou2ds': iou2ds,
+            'num_targets': torch.stack(batch['num_targets'], dim=0),
+            'moments': moments,
+            'idxs': torch.cat(batch['idxs'], dim=0),
+        }
 
 
 def aggregate_feats(
@@ -119,10 +136,9 @@ def aggregate_feats(
 if __name__ == '__main__':
     from torch.utils.data import DataLoader
 
-    from src.datasets.charades.base import Charades
-    from src.datasets.charades.dynamic import DynamicCharades
-    from src.datasets.charades.static import StaticCharades
-    from src.datasets.activitynet.base import ActivityNet
+    from src.datasets.charades import Charades
+    from src.datasets.activitynet import ActivityNet
+    from src.datasets.tacos import TACoS
 
     def test(dataset: CollateBase):
         print(f"dataset length: {len(dataset)}")
@@ -140,83 +156,87 @@ if __name__ == '__main__':
         print()
 
         batch_size = 16
-        batch, info = next(iter(DataLoader(
+        batch = next(iter(DataLoader(
             dataset,
             batch_size,
             shuffle=True,
             num_workers=4,
             collate_fn=dataset.collate_fn,
         )))
-        name_length = max(
-            [len(k) for k in batch.keys()] + [len(k) for k in info.keys()])
+        name_length = max(len(k) for k in batch.keys())
         print("batch:")
         for k, v in batch.items():
             print(f"{k:<{name_length}s}: {v.shape}")
-        print()
-        print("info:")
-        for k, v in info.items():
-            print(f"{k:<{name_length}s}: {len(v)}")
         print('-' * 80)
 
-    print("CharadesSTA train")
+    print("Charades-STA train")
     dataset = Charades(
-        ann_file='data/CharadesSTA/original/train.json',
-        num_clips=32,
+        ann_file='data/CharadesSTA/train.json',
+        num_clips=16,
         feat_file="./data/CharadesSTA/vgg_rgb_features.hdf5",
-        num_init_clips=64,
+        num_init_clips=32,
     )
     test(dataset)
 
-    print("CharadesSTA test")
+    print("Charades-STA test")
     dataset = Charades(
-        ann_file='data/CharadesSTA/original/test.json',
-        num_clips=32,
+        ann_file='data/CharadesSTA/test.json',
+        num_clips=16,
         feat_file="./data/CharadesSTA/vgg_rgb_features.hdf5",
-        num_init_clips=64,
+        num_init_clips=32,
     )
     test(dataset)
 
-    print("Dynamic Multi-target train")
-    dataset = DynamicCharades(
-        ann_file='data/CharadesSTA/new/query_template_group_train.json',
-        num_clips=32,
-        feat_file="./data/CharadesSTA/vgg_rgb_features_all.hdf5",
-        num_init_clips=64,
-    )
-    test(dataset)
-
-    print("Real Multi-target test")
-    dataset = Charades(
-        ann_file='data/CharadesSTA/new/00_percent/test.json',
-        num_clips=32,
-        feat_file="./data/CharadesSTA/vgg_rgb_features_all.hdf5",
-        num_init_clips=64,
-    )
-    test(dataset)
-
-    print("Real Single-target train")
-    dataset = Charades(
-        ann_file='data/CharadesSTA/new/00_percent/train.json',
-        num_clips=32,
-        feat_file="./data/CharadesSTA/vgg_rgb_features_all.hdf5",
-        num_init_clips=64,
-    )
-    test(dataset)
-
-    print("Static Multi-target train")
-    dataset = StaticCharades(
-        ann_file='data/CharadesSTA/new/query_template_group_train.json',
-        num_clips=32,
-        feat_file="./data/CharadesSTA/vgg_rgb_features_all.hdf5",
-        num_init_clips=64,
-    )
-    test(dataset)
-
-    print("ActivityNet train")
+    print("ActivityNet Caption train")
     dataset = ActivityNet(
-        ann_file='./data/ActivityNet/train.json',
-        num_clips=32,
+        ann_file='data/ActivityNet/train.json',
+        num_clips=64,
         feat_file="./data/ActivityNet/sub_activitynet_v1-3_c3d.hdf5",
-        num_init_clips=64,
+        num_init_clips=256,
+    )
+    test(dataset)
+
+    print("ActivityNet Caption validation")
+    dataset = ActivityNet(
+        ann_file='data/ActivityNet/val.json',
+        num_clips=64,
+        feat_file="./data/ActivityNet/sub_activitynet_v1-3_c3d.hdf5",
+        num_init_clips=256,
+    )
+    test(dataset)
+
+    print("ActivityNet Caption test")
+    dataset = ActivityNet(
+        ann_file='data/ActivityNet/test.json',
+        num_clips=64,
+        feat_file="./data/ActivityNet/sub_activitynet_v1-3_c3d.hdf5",
+        num_init_clips=256,
+    )
+    test(dataset)
+
+    print("TACoS train")
+    dataset = TACoS(
+        ann_file='data/TACoS/train.json',
+        num_clips=128,
+        feat_file="./data/TACoS/tall_c3d_features.hdf5",
+        num_init_clips=256,
+    )
+    test(dataset)
+
+    print("TACoS validation")
+    dataset = TACoS(
+        ann_file='data/TACoS/val.json',
+        num_clips=128,
+        feat_file="./data/TACoS/tall_c3d_features.hdf5",
+        num_init_clips=256,
+    )
+    test(dataset)
+
+    print("TACoS test")
+    dataset = TACoS(
+        ann_file='data/TACoS/test.json',
+        num_clips=128,
+        feat_file="./data/TACoS/tall_c3d_features.hdf5",
+        num_init_clips=256,
     )
     test(dataset)

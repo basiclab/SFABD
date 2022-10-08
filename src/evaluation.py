@@ -1,44 +1,33 @@
+from collections import defaultdict
 from typing import List, Dict, Tuple
 
 import torch
 from tqdm import tqdm
 
-from src.utils import iou, nms, scores2d_to_moments_scores1d
-
-
-device = torch.device('cuda:0')
+from src.utils import iou, nms
 
 
 def metric_name(rec_n: int, iou_v: float) -> str:
     return f'R@{rec_n:d},IoU={iou_v:.01f}'
 
 
-def recall_table_to_dict(
-    recall_table: torch.Tensor,     # [num_rec_metrics, num_iou_metrics]
-    rec_metrics: float,
-    iou_metrics: float,
-) -> Dict[str, float]:
-    """Convert recall matrix to dict.
-
-    Returns:
-        recall:
-        {
-            "R@1,IoU0.5": 0.64,
-            "R@1,IoU0.7": 0.47,
-            ...
-        }
-    """
-    assert recall_table.shape == (len(rec_metrics), len(iou_metrics))
-    recall = {}
-    for i, rec_n in enumerate(rec_metrics):
-        for j, iou_v in enumerate(iou_metrics):
-            recall[metric_name(rec_n, iou_v)] = recall_table[i, j].item()
-    return recall
+def evaluate(scores2ds, moments, idxs, rec_metrics, nms_threshold):
+    max_n = torch.tensor(rec_metrics).max().item()
+    output_moments = nms(scores2ds, nms_threshold, pad=max_n)   # [S, max_n, 2]
+    ious = iou(moments, output_moments)                         # [S, max_n]
+    max_ious = torch.stack([
+        ious[:, :rec_n].max(dim=1)[0]
+        for rec_n in rec_metrics
+    ], dim=1)                                                   # [S, R]
+    return {
+        'idx': idxs,
+        'max_ious': max_ious,
+        'best_moment': output_moments[:, 0],
+    }
 
 
-def evaluate(
-    results: List[Dict],
-    nms_threshold: float,
+def calculate_recall(
+    results: List[Dict[str, torch.Tensor]],
     rec_metrics: List[float],
     iou_metrics: List[float],
 ) -> Tuple[Dict[str, Dict[str, float]], List[Dict[str, float]]]:
@@ -46,130 +35,31 @@ def evaluate(
     Returns:
         recalls:
         {
-            "all-target": {
-                "R@1,IoU0.5": 0.64,
-                "R@1,IoU0.7": 0.47,
-                ...
-            },
-            "multi-target": ...,
-            "1-target": ...,
-            "2-target": ...,
-            "3-target": ...,
-        }
-        results:
-        [
-            {
-                "idx": 0,
-                "vid": "VXJDG",
-                ...
-            },
+            "R@1,IoU0.5": 0.64,
+            "R@1,IoU0.7": 0.47,
+            "R@5,IoU0.5": 0.56,
+            "R@5,IoU0.7": 0.83,
             ...
-        ]
+        }
     """
-    # num_rec_metrics, num_iou_metrics = len(rec_metrics), len(iou_metrics)
-    rec_metrics = torch.tensor(rec_metrics)           # [1, 5, 10]
-    iou_metrics = torch.tensor(iou_metrics)           # [0.5, 0.7]
+    rec_metrics = torch.tensor(rec_metrics)
+    iou_metrics = torch.tensor(iou_metrics)
+    recall_table = torch.zeros(rec_metrics.shape[0], iou_metrics.shape[0])
+    num_instance = 0
 
-    recall_tables = torch.zeros(3, rec_metrics.shape[0], iou_metrics.shape[0])
-    num_instances = torch.zeros(3)
-
-    # evaluation results for each prediction
-    eval_results = []
-    pbar = tqdm(results, ncols=0, leave=False, desc="Evaluating")
-    for batch in pbar:
-        for batch_idx in range(len(batch['scores2d'])):
-            scores2d = batch['scores2d'][batch_idx]
-            target_moments = batch['moments'][batch_idx]
-            duration = batch['duration'][batch_idx]
-            num_target = len(target_moments) - 1
-            num_instances[num_target] += 1
-
-            eval_result = {
-                'query': batch['query'][batch_idx],
-                'sents': batch['sents'][batch_idx],
-                'vid': batch['vid'][batch_idx],
-                'idx': batch['idx'][batch_idx].item(),
-                'target_moments': target_moments.tolist(),
-            }
-
-            output_moments, scores1d = scores2d_to_moments_scores1d(scores2d, duration)
-            rank = nms(output_moments, scores1d, nms_threshold)
-            output_moments = output_moments[rank]
-
-            # R@{rec_n}
+    for batch in tqdm(results, ncols=0, leave=False, desc="Evaluating"):
+        for max_ious in batch['max_ious']:
+            num_instance += 1
+            # R@{rec_n},IoU={iou_v}
             for rec_idx, rec_n in enumerate(rec_metrics):
-                max_ious = []                       # max iou for each target
-                best_moments = []
-                for target_moment in target_moments:
-                    ious = iou(target_moment, output_moments[:rec_n])
-                    best_moments.append(output_moments[torch.argmax(ious)])
-                    max_ious.append(ious.max())
-                max_ious = torch.tensor(max_ious)   # [num_target]
-                eval_result[f'R@{rec_n:d}'] = {
-                    'best_moments': torch.stack(best_moments).tolist(),
-                    'max_ious': max_ious.mean().item(),
-                }
-
-                # R@{rec_n},IoU={iou_v}
                 for iou_idx, iou_v in enumerate(iou_metrics):
-                    recall_mask = max_ious >= iou_v
-                    recall = recall_mask.float().mean()
-                    recall_tables[num_target, rec_idx, iou_idx] += recall
+                    if max_ious[rec_idx] >= iou_v:
+                        recall_table[rec_idx, iou_idx] += 1
 
-                    eval_result[metric_name(rec_n, iou_v)] = {
-                        'recall': recall.item(),
-                        'true_positive_mask': recall_mask.tolist(),
-                    }
-            eval_results.append(eval_result)
-    pbar.close()
+    recall_table = recall_table / num_instance
+    recall = {}
+    for i, rec_n in enumerate(rec_metrics):
+        for j, iou_v in enumerate(iou_metrics):
+            recall[metric_name(rec_n, iou_v)] = recall_table[i, j].item()
 
-    recall_table_all_target = (
-        recall_tables.sum(0) / num_instances.sum().clamp(min=1))
-    recall_table_multi_target = (
-        recall_tables[1:].sum(0) / num_instances[1:].sum().clamp(min=1))
-    for num_target in range(len(recall_tables)):
-        recall_tables[num_target] /= num_instances[num_target].clamp(min=1)
-
-    recalls = {
-        "all-target": recall_table_to_dict(
-            recall_table_all_target, rec_metrics, iou_metrics),
-        "multi-target": recall_table_to_dict(
-            recall_table_multi_target, rec_metrics, iou_metrics),
-    }
-    for num_target, recall_table in enumerate(recall_tables):
-        recalls[f"{num_target + 1}-target"] = recall_table_to_dict(
-            recall_table, rec_metrics, iou_metrics)
-
-    return recalls, eval_results
-
-
-def evaluate_loss(
-    results: List[Dict],
-    loss_fn: torch.nn.Module,
-) -> torch.Tensor:
-    loss_sum = 0
-    counter = 0
-    for batch in results:
-        scores2d = batch['scores2d']
-        iou2d = batch['iou2d']
-        loss_sum += loss_fn(scores2d, iou2d) * len(scores2d)
-        counter += len(scores2d)
-    return loss_sum / counter
-
-
-def inference_loop(
-    model: torch.nn.Module,
-    loader: torch.utils.data.DataLoader,
-) -> List[Dict]:
-    model.eval()
-    results = []    # batch of scores2d and info. for calculating recall
-    for batch, info in tqdm(loader, ncols=0, leave=False, desc="Inferencing"):
-        batch = {key: value.to(device) for key, value in batch.items()}
-        with torch.no_grad():
-            *_, scores2d = model(**batch)
-        results.append({
-            'scores2d': scores2d.cpu(),
-            'iou2d': batch['iou2d'].cpu(),
-            **info,
-        })
-    return results
+    return recall
