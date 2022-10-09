@@ -5,7 +5,7 @@ import click
 import torch.multiprocessing
 
 from src.training import training_loop
-from src.misc import CommandAwareConfig
+from src.misc import AttrDict, CommandAwareConfig
 
 
 @click.command(cls=CommandAwareConfig('config'), context_settings={'show_default': True})
@@ -58,21 +58,21 @@ from src.misc import CommandAwareConfig
 # logging
 @click.option('--logdir', default="./logs/test", type=str)
 def main(**kwargs):
-    del kwargs['config']
+    config = AttrDict(**kwargs)
 
     num_gpus = len(os.environ.get('CUDA_VISIBLE_DEVICES', "0").split(','))
     with tempfile.TemporaryDirectory() as temp_dir:
         processes = []
         for rank in range(num_gpus):
             p = torch.multiprocessing.Process(
-                target=subprocess, args=(rank, num_gpus, kwargs, temp_dir))
+                target=subprocess, args=(rank, num_gpus, temp_dir, config))
             p.start()
             processes.append(p)
         for p in processes:
             p.join()
 
 
-def subprocess(rank, world_size, kwargs, temp_dir):
+def subprocess(rank, world_size, temp_dir, config):
     init_file = os.path.abspath(os.path.join(temp_dir, '.torch_distributed_init'))
     init_method = f'file://{init_file}'
     torch.distributed.init_process_group('nccl', init_method, rank=rank, world_size=world_size)
@@ -86,7 +86,7 @@ def subprocess(rank, world_size, kwargs, temp_dir):
     torch.cuda.empty_cache()
 
     # training
-    training_loop(kwargs=kwargs, **kwargs)
+    training_loop(config)
 
 
 if __name__ == "__main__":

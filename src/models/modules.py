@@ -117,16 +117,12 @@ class LanguageModel(nn.Module):
 
     def forward(
         self,
-        tokens: torch.Tensor,           # [N, T]
-        length: torch.Tensor,           # [N]
-    ):
-        attention_mask = torch.arange(tokens.size(1), device=tokens.device)     # [T]
-        attention_mask = attention_mask.repeat(tokens.size(0), 1)               # [N, T]
-        attention_mask = attention_mask < length.unsqueeze(-1)                    # [N, T]
+        sents_tokens: torch.Tensor,     # [S, L]
+        sents_masks: torch.Tensor,      # [S, L]
+    ):                                  # [S, L]
+        feats = self.bert(sents_tokens, attention_mask=sents_masks)[0]      # [S, L, C]
+        feats = (feats * sents_masks.unsqueeze(-1)).sum(dim=1)              # [S, C]
+        feats = feats / sents_masks.sum(dim=1, keepdim=True)                # [S, C]
 
-        feats = self.bert(tokens, attention_mask=attention_mask)[0]             # [N, T, C]
-        feats = (feats * attention_mask.unsqueeze(-1)).sum(dim=1)               # [N, C]
-        feats = feats / length.unsqueeze(-1)                                      # [N, C]
-
-        feats = self.proj(feats)                                                # [N, C]
+        feats = self.proj(feats)                                            # [S, C]
         return feats

@@ -11,7 +11,13 @@ def metric_name(rec_n: int, iou_v: float) -> str:
     return f'R@{rec_n:d},IoU={iou_v:.01f}'
 
 
-def evaluate(scores2ds, moments, idxs, rec_metrics, nms_threshold):
+def evaluate(
+    scores2ds: torch.Tensor,    # [B, N, N]
+    moments: torch.Tensor,      # [B, N, 2]
+    idxs: torch.Tensor,         # [B]
+    rec_metrics: List[float],   # [R]
+    nms_threshold: float,
+) -> Dict[str, torch.Tensor]:
     max_n = torch.tensor(rec_metrics).max().item()
     output_moments = nms(scores2ds, nms_threshold, pad=max_n)   # [S, max_n, 2]
     ious = iou(moments, output_moments)                         # [S, max_n]
@@ -32,15 +38,13 @@ def calculate_recall(
     iou_metrics: List[float],
 ) -> Tuple[Dict[str, Dict[str, float]], List[Dict[str, float]]]:
     """
-    Returns:
-        recalls:
-        {
-            "R@1,IoU0.5": 0.64,
-            "R@1,IoU0.7": 0.47,
-            "R@5,IoU0.5": 0.56,
-            "R@5,IoU0.7": 0.83,
-            ...
-        }
+    Returns: {
+        "R@1,IoU0.5": 0.64,
+        "R@1,IoU0.7": 0.47,
+        "R@5,IoU0.5": 0.56,
+        "R@5,IoU0.7": 0.83,
+        ...
+    }
     """
     rec_metrics = torch.tensor(rec_metrics)
     iou_metrics = torch.tensor(iou_metrics)

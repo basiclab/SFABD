@@ -4,17 +4,17 @@ from collections import defaultdict
 from typing import List, Dict
 
 import torch
+from tensorboardX import SummaryWriter
 from torch import optim
 from torch.nn.utils import clip_grad_norm_
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
-from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
 import src.dist as dist
 from src.evaluation import calculate_recall, evaluate
 from src.losses import ContrastiveLoss, ScaledIoULoss
-from src.misc import set_seed, print_table, construct_class
+from src.misc import AttrDict, set_seed, print_table, construct_class
 from src.models.model import MMN
 from src.utils import moment_to_iou2d
 
@@ -35,10 +35,7 @@ def write_recall_to_file(path, train_recall, test_recall, epoch):
 def test_epoch(
     model: torch.nn.Module,
     loader: torch.utils.data.DataLoader,
-    # config parameters
-    rec_metrics: List[int],
-    nms_threshold: float,
-    **dummy,
+    config: AttrDict,
 ) -> List[Dict]:
     device = dist.get_device()
     model.eval()
@@ -51,8 +48,8 @@ def test_epoch(
             scores2d,
             batch['moments'],
             batch['idxs'],
-            rec_metrics,
-            nms_threshold,
+            config.rec_metrics,
+            config.nms_threshold,
         )
         result = dist.all_gather_dict(result)
         results.append(result)
@@ -66,15 +63,7 @@ def train_epoch(
     loss_iou_fn: torch.nn.Module,
     loss_con_fn: torch.nn.Module,
     epoch: int,
-    # config parameters
-    num_clips: int,
-    iou_weight: float,
-    contrastive_weight: float,
-    only_iou_epoch: int,
-    clip_grad_norm: float,
-    rec_metrics: List[int],
-    nms_threshold: float,
-    **dummy,
+    config: AttrDict,
 ):
     device = dist.get_device()
     pbar = tqdm(        # progress bar for each epoch
@@ -89,10 +78,10 @@ def train_epoch(
     for batch in pbar:
         batch = {key: value.to(device) for key, value in batch.items()}
         video_feats, sents_feats, scores2d, mask2d = model(**batch)
-        iou2ds = moment_to_iou2d(batch['moments'], num_clips)
+        iou2ds = moment_to_iou2d(batch['moments'], config.num_clips)
 
         loss_iou = loss_iou_fn(scores2d, iou2ds, mask2d)
-        if contrastive_weight != 0:
+        if config.contrastive_weight != 0:
             (
                 loss_inter_video,
                 loss_inter_query,
@@ -114,17 +103,17 @@ def train_epoch(
             loss_con = torch.zeros((), device=device)
 
         loss = 0
-        if epoch < only_iou_epoch:
-            loss += loss_iou * iou_weight
-            loss += loss_con * contrastive_weight
+        if epoch < config.only_iou_epoch:
+            loss += loss_iou * config.iou_weight
+            loss += loss_con * config.contrastive_weight
         else:
-            loss += loss_iou * iou_weight
-            loss += loss_con * contrastive_weight * 0.1
+            loss += loss_iou * config.iou_weight
+            loss += loss_con * config.contrastive_weight * 0.1
 
         optimizer.zero_grad()
         loss.backward()
-        if clip_grad_norm > 0:
-            clip_grad_norm_(model.parameters(), clip_grad_norm)
+        if config.clip_grad_norm > 0:
+            clip_grad_norm_(model.parameters(), config.clip_grad_norm)
         optimizer.step()
 
         # save results for recall calculation
@@ -132,8 +121,8 @@ def train_epoch(
             scores2d.detach(),
             batch['moments'],
             batch['idxs'],
-            rec_metrics,
-            nms_threshold,
+            config.rec_metrics,
+            config.nms_threshold,
         )
         result = dist.all_gather_dict(result)
         results.append(result)
@@ -157,164 +146,122 @@ def train_epoch(
     return results, losses
 
 
-def training_loop(
-    seed: int,
-    TrainDataset: str,      # Train dataset class name
-    train_ann_file: str,    # Train annotation file path
-    TestDataset: str,       # Test dataset class name
-    test_ann_file: str,     # Test annotation file path
-    feat_file: str,         # feature file path
-    feat_channel: int,      # feature channel size
-    num_init_clips: int,    # Number of initial clips
-    num_clips: int,         # Number of clips
-    # model
-    feat1d_out_channel: int,
-    feat1d_pool_kerenl_size: int,
-    feat2d_pool_counts: List[int],
-    conv2d_hidden_channel: int,
-    conv2d_kernel_size: int,
-    conv2d_num_layers: int,
-    joint_space_size: int,
-    # iou loss
-    min_iou: float,
-    max_iou: float,
-    iou_weight: float,
-    # contrastive loss
-    tau_video: float,
-    tau_query: float,
-    neg_video_iou: float,
-    pos_video_topk: int,
-    margin: float,
-    contrastive_weight: float,
-    # optimizer
-    base_lr: float,
-    bert_lr: float,
-    milestones: List[int],
-    batch_size: int,
-    epochs: int,
-    bert_freeze_epoch: int,
-    only_iou_epoch: int,
-    clip_grad_norm: float,
-    # test
-    test_batch_size: int,
-    nms_threshold: float,
-    rec_metrics: List[float],
-    iou_metrics: List[float],
-    # logging
-    logdir: str,
-    kwargs: Dict,
-):
-    set_seed(seed)
+def training_loop(config: AttrDict):
+    set_seed(config.seed)
     device = dist.get_device()
 
+    # train Dataset and DataLoader
     train_dataset = construct_class(
-        TrainDataset,
-        ann_file=train_ann_file,
-        num_clips=num_clips,
-        feat_file=feat_file,
-        num_init_clips=num_init_clips,
-        seed=seed,
+        config.TrainDataset,
+        ann_file=config.train_ann_file,
+        num_clips=config.num_clips,
+        feat_file=config.feat_file,
+        num_init_clips=config.num_init_clips,
+        seed=config.seed,
     )
-    train_sampler = DistributedSampler(train_dataset, shuffle=True, seed=seed)
+    train_sampler = DistributedSampler(train_dataset, shuffle=True, seed=config.seed)
     train_loader = DataLoader(
         dataset=train_dataset,
-        batch_size=batch_size // dist.get_world_size(),
+        batch_size=config.batch_size // dist.get_world_size(),
         collate_fn=train_dataset.collate_fn,
         sampler=train_sampler,
         num_workers=min(torch.get_num_threads(), 8),
     )
 
+    # test Dataset and DataLoader
     test_dataset = construct_class(
-        TestDataset,
-        ann_file=test_ann_file,
-        num_clips=num_clips,
-        feat_file=feat_file,
-        num_init_clips=num_init_clips,
-        seed=seed,
+        config.TestDataset,
+        ann_file=config.test_ann_file,
+        num_clips=config.num_clips,
+        feat_file=config.feat_file,
+        num_init_clips=config.num_init_clips,
+        seed=config.seed,
     )
-    test_sampler = DistributedSampler(test_dataset, shuffle=False, seed=seed)
+    test_sampler = DistributedSampler(test_dataset, shuffle=False, seed=config.seed)
     test_loader = DataLoader(
         dataset=test_dataset,
-        batch_size=test_batch_size // dist.get_world_size(),
+        batch_size=config.test_batch_size // dist.get_world_size(),
         collate_fn=test_dataset.collate_fn,
         sampler=test_sampler,
         num_workers=min(torch.get_num_threads(), 8),
     )
 
-    loss_iou_fn = ScaledIoULoss(min_iou, max_iou)
+    # loss functions
+    loss_iou_fn = ScaledIoULoss(config.min_iou, config.max_iou)
     loss_con_fn = ContrastiveLoss(
-        T_v=tau_video,
-        T_q=tau_query,
-        neg_video_iou=neg_video_iou,
-        pos_video_topk=pos_video_topk,
-        margin=margin,
+        T_v=config.tau_video,
+        T_q=config.tau_query,
+        neg_video_iou=config.neg_video_iou,
+        pos_video_topk=config.pos_video_topk,
+        margin=config.margin,
     )
 
-    model = MMN(
-        feat1d_in_channel=feat_channel,
-        feat1d_out_channel=feat1d_out_channel,
-        feat1d_pool_kerenl_size=feat1d_pool_kerenl_size,
-        feat1d_pool_stride_size=num_init_clips // num_clips,
-        feat2d_pool_counts=feat2d_pool_counts,
-        conv2d_hidden_channel=conv2d_hidden_channel,
-        conv2d_kernel_size=conv2d_kernel_size,
-        conv2d_num_layers=conv2d_num_layers,
-        joint_space_size=joint_space_size,
+    # model
+    model_local = MMN(
+        feat1d_in_channel=config.feat_channel,
+        feat1d_out_channel=config.feat1d_out_channel,
+        feat1d_pool_kerenl_size=config.feat1d_pool_kerenl_size,
+        feat1d_pool_stride_size=config.num_init_clips // config.num_clips,
+        feat2d_pool_counts=config.feat2d_pool_counts,
+        conv2d_hidden_channel=config.conv2d_hidden_channel,
+        conv2d_kernel_size=config.conv2d_kernel_size,
+        conv2d_num_layers=config.conv2d_num_layers,
+        joint_space_size=config.joint_space_size,
     ).to(device)
     model = DistributedDataParallel(
-        model, device_ids=[device], find_unused_parameters=True)
+        model_local, device_ids=[device], find_unused_parameters=True)
 
     bert_params = []
     base_params = []
     for name, params in model.named_parameters():
         if 'bert' in name:
+            params.requires_grad_(False)
             bert_params.append(params)
         else:
             base_params.append(params)
 
     # optimizer
     optimizer = optim.AdamW([
-        {'params': base_params, 'lr': base_lr},
-        {'params': bert_params, 'lr': bert_lr}
+        {'params': base_params, 'lr': config.base_lr},
+        {'params': bert_params, 'lr': config.bert_lr}
     ], betas=(0.9, 0.99), weight_decay=1e-5)
     # scheduler
-    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones, 0.1)
+    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, config.milestones, 0.1)
 
     # evaluate test set before training to get initial recall
-    test_results = test_epoch(model, test_loader, **kwargs)
+    test_results = test_epoch(model, test_loader, config)
     if dist.is_main():
-        os.makedirs(logdir, exist_ok=False)
+        os.makedirs(config.logdir, exist_ok=False)
         json.dump(
-            kwargs, open(os.path.join(logdir, 'config.json'), "w"), indent=4)
-        train_writer = SummaryWriter(os.path.join(logdir, "train"))
-        test_writer = SummaryWriter(os.path.join(logdir, "test"))
+            config,
+            open(os.path.join(config.logdir, 'config.json'), "w"), indent=4)
+        train_writer = SummaryWriter(os.path.join(config.logdir, "train"))
+        test_writer = SummaryWriter(os.path.join(config.logdir, "test"))
 
         test_recall = calculate_recall(
             test_results,
-            rec_metrics,
-            iou_metrics,
+            config.rec_metrics,
+            config.iou_metrics,
         )
         for metric_name, value in test_recall.items():
             test_writer.add_scalar(f'recall/{metric_name}', value, 0)
-        print_table(epoch=0, recalls_dict={'test': test_recall})
+        print_table(epoch=0, rows_dict={'test': test_recall})
     dist.barrier()
 
-    for epoch in range(1, epochs + 1):
+    for epoch in range(1, config.epochs + 1):
         model.train()
         train_sampler.set_epoch(epoch)
 
         # freeze BERT parameters for the first few epochs
-        if epoch < bert_freeze_epoch:
-            bert_requires_grad = False
-        else:
-            bert_requires_grad = True
-        for param in bert_params:
-            param.requires_grad_(bert_requires_grad)
+        if epoch == config.bert_freeze_epoch + 1:
+            for param in bert_params:
+                param.requires_grad_(True)
+            model = DistributedDataParallel(model_local, device_ids=[device])
 
         train_results, train_losses = train_epoch(
             model, train_loader, optimizer, loss_iou_fn, loss_con_fn, epoch,
-            **kwargs)
-        test_results = test_epoch(model, test_loader, **kwargs)
+            config)
+        test_results = test_epoch(model, test_loader, config)
         scheduler.step()
 
         if dist.is_main():
@@ -328,19 +275,19 @@ def training_loop(
 
             # evaluate train set
             train_recall = calculate_recall(
-                train_results, rec_metrics, iou_metrics)
+                train_results, config.rec_metrics, config.iou_metrics)
             for metric_name, value in train_recall.items():
                 train_writer.add_scalar(f'recall/{metric_name}', value, epoch)
 
             # evaluate test set
             test_recall = calculate_recall(
-                test_results, rec_metrics, iou_metrics)
+                test_results, config.rec_metrics, config.iou_metrics)
             for metric_name, value in test_recall.items():
                 test_writer.add_scalar(f'recall/{metric_name}', value, epoch)
 
             # save evaluation results to file
             write_recall_to_file(
-                os.path.join(logdir, "recall.json"),
+                os.path.join(config.logdir, "recall.json"),
                 train_recall,
                 test_recall,
                 epoch,
@@ -354,7 +301,7 @@ def training_loop(
                 "optimizer": optimizer.state_dict(),
                 "scheduler": scheduler.state_dict(),
             }
-            path = os.path.join(logdir, f"epoch_{epoch}.pth")
+            path = os.path.join(config.logdir, f"epoch_{epoch}.pth")
             torch.save(state, path)
 
             train_writer.flush()

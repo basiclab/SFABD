@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Dict
 
 import torch
 import torch.nn as nn
@@ -70,7 +70,7 @@ class MMN(nn.Module):
         self,
         video_feats: torch.Tensor,          # [B, C, NUM_INIT_CLIPS]
         sents_tokens: torch.Tensor,         # [S, L]
-        sents_length: torch.Tensor,         # [S]
+        sents_masks: torch.Tensor,          # [S]
         num_targets: torch.Tensor,          # [B]
         **kwargs,                           # dummy
     ):
@@ -85,7 +85,7 @@ class MMN(nn.Module):
         device = num_targets.device
         scatter_idx = torch.arange(B).to(device).repeat_interleave(num_targets)
         video_feats, mask2d = self.video_model(video_feats)
-        sents_feats = self.query_model(sents_tokens, sents_length)
+        sents_feats = self.query_model(sents_tokens, sents_masks)
         scores2d = self.matching_scores(
             video_feats, sents_feats, scatter_idx, mask2d)
 
@@ -141,15 +141,14 @@ if __name__ == '__main__':
         num_targets = torch.tensor([1, 1, 2, 2, 3, 1, 3, 2])
         S = sum(num_targets)
         assert S == len(sents)
-        sents = tokenizer(
-            sents, padding=True, return_tensors="pt", return_length=True)
+        sents = tokenizer(sents, padding=True, return_tensors="pt")
 
         video_feats = torch.randn(B, INIT_CHANNEL, NUM_INIT_CLIPS)
         sents_tokens = sents['input_ids']
-        sents_lengthgth = sents['length']
+        sents_masks = sents['attention_mask']
 
         video_feats, sents_feats, scores, mask2d = model(
-            video_feats, sents_tokens, sents_lengthgth, num_targets)
+            video_feats, sents_tokens, sents_masks, num_targets)
 
         print('-' * 80)
         print(f"video_feats   : {video_feats.shape}")

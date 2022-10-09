@@ -26,40 +26,42 @@ class CollateBase(torch.utils.data.Dataset):
     def get_feat(self, anno):
         raise NotImplementedError
 
-    def get_duration(self, anno):
-        return anno['duration']
-
     def parse_anno(self, ann_file):
         with open(ann_file, 'r') as f:
             raw_annos = json.load(f)
 
         annos = []
-        desc = self.__class__.__name__
-        with tqdm(raw_annos.items(), ncols=0, leave=False, desc=desc,
-                  disable=not dist.is_main()) as pbar:
-            for vid, anno in pbar:
-                timestamps = anno['timestamps']
-                sentences = anno['sentences']
-                duration = self.get_duration(anno)  # video length
-                moments = []                        # start and end time of each moment
-                sents = []                          # sentence for each moment
-                for (start, end), sent in zip(timestamps, sentences):
-                    moment = torch.Tensor([max(start, 0), min(end, duration)])
-                    if moment[0] < moment[1]:
-                        moments.append(moment / duration)
-                        sents.append(sent)
-                if len(moments) == 0:
-                    continue
+        pbar = tqdm(
+            raw_annos.items(),
+            ncols=0,
+            leave=False,
+            desc=self.__class__.__name__,
+            disable=not dist.is_main()
+        )
+        for vid, anno in pbar:
+            sentences = anno['sentences']
+            duration = torch.tensor(anno['duration'])
+            timestamps = torch.Tensor(anno['timestamps'])
+            timestamps = (timestamps / duration).clamp(min=0, max=1)
+            moments = []                        # start and end time of each moment
+            sents = []                          # sentence for each moment
+            for moment, sent in zip(timestamps, sentences):
+                if moment[0] < moment[1]:
+                    moments.append(moment)
+                    sents.append(sent)
+
+            if len(moments) != 0:
                 moments = torch.stack(moments, dim=0)
                 num_targets = torch.tensor(len(moments))
-
                 annos.append({
                     'vid': vid,
-                    'sents': sents,                         # original sentences
-                    'num_targets': num_targets,             # number of target moments
-                    'moments': moments,                     # clips moments in seconds
-                    'duration': torch.tensor(duration),     # video length in seconds
+                    'sents': sents,
+                    'num_targets': num_targets,
+                    'moments': moments,
+                    'duration': duration,
                 })
+        pbar.close()
+
         return annos
 
     def __len__(self):
@@ -86,8 +88,7 @@ class CollateBase(torch.utils.data.Dataset):
         sents = self.tokenizer(
             sum(batch['sents'], []),    # List of List of str -> List of str
             padding=True,
-            return_tensors="pt",
-            return_length=True)
+            return_tensors="pt")
 
         moments = torch.cat(batch['moments'], dim=0)
         iou2ds = moment_to_iou2d(moments, self.num_clips)
@@ -95,7 +96,7 @@ class CollateBase(torch.utils.data.Dataset):
         return {
             'video_feats': torch.stack(batch['video_feats'], dim=0),
             'sents_tokens': sents['input_ids'],
-            'sents_length': sents['length'],
+            'sents_masks': sents['attention_mask'],
             'iou2ds': iou2ds,
             'num_targets': torch.stack(batch['num_targets'], dim=0),
             'moments': moments,
