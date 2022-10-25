@@ -30,10 +30,15 @@ Folder structure of `./data`.
 ## Training
 - Single GPU training.
     ```
-    python train.py --config path/to/config.json
+    python train.py --config path/to/config.json --logdir path/to/log/dir
     ```
 
 - Multi-GPU training.
     ```
-    CUDA_VISIBLE_DEVICES=0,1,2,3 python train.py --config path/to/config.json
+    CUDA_VISIBLE_DEVICES=0,1,2,3 python train.py --config path/to/config.json --logdir path/to/log/dir
     ```
+
+## Tensorboard
+```
+tensorboard --logdir path/to/log
+```

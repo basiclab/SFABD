@@ -52,6 +52,7 @@ def prepare_mAP(
     nms_threshold: float,
 ) -> Dict[str, torch.Tensor]:
     """Calculate max iou and corresponding GT id for each proposal."""
+    device = scores2ds.device
     M = num_targets.sum()
     assert M == tgt_moments.shape[0]
 
@@ -76,7 +77,7 @@ def prepare_mAP(
     tgt_idxs = torch.cat(tgt_idxs)                              # [sum(n)]
     out_ious = torch.cat(out_ious)                              # [sum(n)]
     scores1ds = torch.cat(scores1ds)                            # [sum(n)]
-    num_proposals = torch.tensor(num_proposals)                 # [S]
+    num_proposals = torch.tensor(num_proposals).to(device)      # [S]
     return {
         'out_conf': scores1ds,
         'tgt_idxs': tgt_idxs,

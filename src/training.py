@@ -231,9 +231,9 @@ def training_loop(config: AttrDict):
         conv2d_num_layers=config.conv2d_num_layers,
         joint_space_size=config.joint_space_size,
     ).to(device)
-    model = SyncBatchNorm.convert_sync_batchnorm(model)
+    model = SyncBatchNorm.convert_sync_batchnorm(model_local)
     model = DistributedDataParallel(
-        model_local, device_ids=[device], find_unused_parameters=True)
+        model, device_ids=[device], find_unused_parameters=True)
 
     bert_params = []
     base_params = []
