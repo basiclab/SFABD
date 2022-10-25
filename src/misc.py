@@ -46,52 +46,51 @@ def construct_class(module, *args, **kwargs):
 
 def print_table(
     epoch: int = 0,
-    rows_dict: Dict[str, Dict[str, float]] = {},
-    columns=[
-        "R@1,IoU=0.5",
-        "R@1,IoU=0.7",
-        "R@5,IoU=0.5",
-        "R@5,IoU=0.7",
-    ]
+    rows: Dict[str, Dict[str, float]] = {},
 ) -> None:
-    rows = [[f"Epoch {epoch:2d}"] + columns]
-    widths = [len(col) for col in rows[0]]
-    for row_name, row_dict in rows_dict.items():
-        rows.append([row_name])
-        for i, col in enumerate(columns):
-            if col in row_dict:
-                rows[-1].append(f"{row_dict[col] * 100:.3f}")
+    columns = set()
+    for row in rows.values():
+        columns.update(row.keys())
+    columns = sorted(columns)
+
+    rows_str = [[f"Epoch {epoch:2d}", *columns]]
+    rows_width = [len(head) for head in rows_str[0]]
+    for row_name, row in rows.items():
+        row_str = [row_name]
+        for column in columns:
+            if column in row:
+                row_str.append(f"{row[column] * 100:.3f}")
             else:
-                rows[-1].append("Not Found")
-            widths[i] = max(widths[i], len(rows[-1][-1]))
-    sep = '+' + '+'.join('-' * (w + 2) for w in widths) + '+'
+                row_str.append("Not Found")
+        for i in range(len(row_str)):
+            rows_width[i] = max(rows_width[i], len(row_str[i]))
+        rows_str.append(row_str)
+
+    sep = '+' + '+'.join('-' * (w + 2) for w in rows_width) + '+'
     print(sep)
-    for row in rows:
+    for row_str in rows_str:
         print('|', end='')
-        for width, cell in zip(widths, row):
+        for width, cell in zip(rows_width, row_str):
             print(cell.center(width + 2), end='|')
         print("\n" + sep)
-    print()
 
 
 if __name__ == '__main__':
     import random
     print_table(
         epoch=3,
-        rows_dict={
+        rows={
             "train": {
+                "R@1,IoU=0.5": random.random(),
                 "R@1,IoU=0.7": random.random(),
+                "R@5,IoU=0.5": random.random(),
                 "R@5,IoU=0.7": random.random(),
             },
             "test": {
+                "R@1,IoU=0.5": random.random(),
                 "R@1,IoU=0.7": random.random(),
+                "R@5,IoU=0.5": random.random(),
                 "R@5,IoU=0.7": random.random(),
             },
         },
-        columns=[
-            "R@1,IoU=0.5",
-            "R@1,IoU=0.7",
-            "R@5,IoU=0.5",
-            "R@5,IoU=0.7",
-        ]
     )

@@ -40,6 +40,8 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--neg_video_iou', default=0.5)
 @click.option('--pos_video_topk', default=1)
 @click.option('--margin', default=0.4)
+@click.option('--inter', default=True)
+@click.option('--intra', default=False)
 @click.option('--contrastive_weight', default=0.05)
 # optimizer
 @click.option('--base_lr', default=1e-4)
@@ -53,10 +55,12 @@ from src.misc import AttrDict, CommandAwareConfig
 # test
 @click.option('--test_batch_size', default=64)
 @click.option('--nms_threshold', default=0.5)
-@click.option('--rec_metrics', default=[1, 5, 10], multiple=True)
-@click.option('--iou_metrics', default=[0.5, 0.7], multiple=True)
+@click.option('--num_moments', default=[1, 5, 10], multiple=True)
+@click.option('--iou_thresholds', default=[0.5, 0.7], multiple=True)
 # logging
 @click.option('--logdir', default="./logs/test", type=str)
+@click.option('--best_metric', default="R@1,IoU=0.7")
+@click.option('--save_freq', default=5)
 def main(**kwargs):
     config = AttrDict(**kwargs)
 
@@ -76,7 +80,7 @@ def subprocess(rank, world_size, temp_dir, config):
     init_file = os.path.abspath(os.path.join(temp_dir, '.torch_distributed_init'))
     init_method = f'file://{init_file}'
     torch.distributed.init_process_group('nccl', init_method, rank=rank, world_size=world_size)
-    print("Node %d is initialized" % rank)
+    print(f"Node {rank} is initialized")
 
     # https://github.com/facebookresearch/maskrcnn-benchmark/issues/103#issuecomment-785815218
     torch.multiprocessing.set_sharing_strategy('file_system')

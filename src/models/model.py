@@ -43,14 +43,14 @@ class MMN(nn.Module):
                 conv2d_num_layers,
             )                                               # [B, C, N, N]
         )
-        self.query_model = LanguageModel(joint_space_size)  # [S, C]
+        self.sents_model = LanguageModel(joint_space_size)  # [S, C]
 
     def matching_scores(
         self,
-        video_feats: torch.Tensor,  # [B, C, N, N]
-        query_feats: torch.Tensor,  # [S, C]
-        scatter_idx: torch.Tensor,  # [S]
-        mask2d: torch.Tensor,       # [N, N]
+        video_feats: torch.Tensor,      # [B, C, N, N]
+        sents_feats: torch.Tensor,      # [S, C]
+        num_sentences: torch.Tensor,    # [B]
+        mask2d: torch.Tensor,           # [N, N]
     ):
         """
         Return matching scores between each proposal and corresponding query.
@@ -58,9 +58,13 @@ class MMN(nn.Module):
         Return:
             scores_matrix: [B, N, N], the value range is [-1, 1]
         """
+        device = num_sentences.device
+        scatter_s2v = torch.arange(len(num_sentences), device=device).long()
+        scatter_s2v = scatter_s2v.repeat_interleave(num_sentences)
+
         video_feats = F.normalize(video_feats, dim=1)
-        query_feats = F.normalize(query_feats, dim=1)
-        scores2d = video_feats[scatter_idx] * query_feats[:, :, None, None]
+        sents_feats = F.normalize(sents_feats, dim=1)
+        scores2d = video_feats[scatter_s2v] * sents_feats[:, :, None, None]
         scores2d = scores2d.sum(dim=1)              # [S, N, N]
         scores2d = torch.sigmoid(scores2d * 10)     # [S, N, N]
         scores2d = scores2d * mask2d.unsqueeze(0)   # [S, N, N]
@@ -70,8 +74,8 @@ class MMN(nn.Module):
         self,
         video_feats: torch.Tensor,          # [B, C, NUM_INIT_CLIPS]
         sents_tokens: torch.Tensor,         # [S, L]
-        sents_masks: torch.Tensor,          # [S]
-        num_targets: torch.Tensor,          # [B]
+        sents_masks: torch.Tensor,          # [S, L]
+        num_sentences: torch.Tensor,        # [B]
         **kwargs,                           # dummy
     ):
         """
@@ -81,13 +85,14 @@ class MMN(nn.Module):
             S: number of (S)entences
             L: (L)ength of tokens
         """
-        B, = num_targets.shape
-        device = num_targets.device
-        scatter_idx = torch.arange(B).to(device).repeat_interleave(num_targets)
+        assert sents_tokens.shape == sents_masks.shape
+        assert sents_tokens.shape[0] == num_sentences.sum()
+
         video_feats, mask2d = self.video_model(video_feats)
-        sents_feats = self.query_model(sents_tokens, sents_masks)
+        sents_feats = self.sents_model(sents_tokens, sents_masks)
+
         scores2d = self.matching_scores(
-            video_feats, sents_feats, scatter_idx, mask2d)
+            video_feats, sents_feats, num_sentences, mask2d)
 
         return video_feats, sents_feats, scores2d, mask2d
 
@@ -138,8 +143,8 @@ if __name__ == '__main__':
             "person sitting on the floor.",
             "a person sitting in a chair takes off their shoes.",
         ]
-        num_targets = torch.tensor([1, 1, 2, 2, 3, 1, 3, 2])
-        S = sum(num_targets)
+        num_sentences = torch.tensor([1, 1, 2, 2, 3, 1, 3, 2])
+        S = sum(num_sentences)
         assert S == len(sents)
         sents = tokenizer(sents, padding=True, return_tensors="pt")
 
@@ -148,7 +153,7 @@ if __name__ == '__main__':
         sents_masks = sents['attention_mask']
 
         video_feats, sents_feats, scores, mask2d = model(
-            video_feats, sents_tokens, sents_masks, num_targets)
+            video_feats, sents_tokens, sents_masks, num_sentences)
 
         print('-' * 80)
         print(f"video_feats   : {video_feats.shape}")
@@ -158,7 +163,7 @@ if __name__ == '__main__':
 
         assert video_feats.shape == (B, joint_space_size, NUM_CLIPS, NUM_CLIPS)
         assert sents_feats.shape == (S, joint_space_size)
-        assert scores.shape == (sum(num_targets).item(), NUM_CLIPS, NUM_CLIPS)
+        assert scores.shape == (sum(num_sentences).item(), NUM_CLIPS, NUM_CLIPS)
         assert mask2d.shape == (NUM_CLIPS, NUM_CLIPS)
 
     # Charades

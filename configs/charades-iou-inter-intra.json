@@ -23,7 +23,7 @@
     "pos_video_topk": 1,
     "margin": 0.4,
     "inter": true,
-    "intra": false,
+    "intra": true,
     "contrastive_weight": 0.05,
     "base_lr": 1e-4,
     "bert_lr": 1e-5,
@@ -37,5 +37,5 @@
     "nms_threshold": 0.5,
     "num_moments": [1, 5],
     "iou_thresholds": [0.5, 0.7],
-    "logdir": "./logs/charades-iou-inter"
+    "logdir": "./logs/charades-iou-inter-intra"
 }

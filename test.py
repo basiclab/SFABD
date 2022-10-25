@@ -1,288 +1,183 @@
-import json
 import os
-from typing import List, Dict
 
+import click
+import matplotlib.pyplot as plt
+import seaborn as sns
 import torch
-from torch import optim
-from torch.nn.utils import clip_grad_norm_
+import torch.multiprocessing
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from src.evaluation import inference_loop, evaluate
-from src.losses import ContrastiveLoss, ScaledIoULoss
-from src.misc import set_seed, print_table, construct_class
+import src.dist as dist
+from src.evaluation import (
+    prepare_recall, prepare_mAP, calculate_recall, calculate_mAP, recall_name)
+from src.misc import AttrDict, CommandAwareConfig, print_table, construct_class
 from src.models.model import MMN
 
 
-device = torch.device('cuda:0')
+@click.command(cls=CommandAwareConfig('config'), context_settings={'show_default': True})
+@click.option('--config', default=None, type=str)
+@click.option('--seed', default=25285)
+# test dataset
+@click.option('--TestDataset', "TestDataset", default='src.datasets.charades.Charades')
+@click.option('--test_ann_file', default="./data/CharadesSTA/charades_test.json")
+# dataset share
+@click.option('--feat_file', default="./data/CharadesSTA/vgg_rgb_features.hdf5")
+@click.option('--feat_channel', default=4096)
+@click.option('--num_init_clips', default=32)
+@click.option('--num_clips', default=16)
+# model
+@click.option('--feat1d_out_channel', default=512)
+@click.option('--feat1d_pool_kerenl_size', default=2)
+@click.option('--feat2d_pool_counts', default=[16], multiple=True)
+@click.option('--conv2d_hidden_channel', default=512)
+@click.option('--conv2d_kernel_size', default=5)
+@click.option('--conv2d_num_layers', default=8)
+@click.option('--joint_space_size', default=256)
+# test
+@click.option('--test_batch_size', default=64)
+@click.option('--nms_threshold', default=0.5)
+@click.option('--num_moments', default=[1, 5, 10], multiple=True)
+@click.option('--iou_thresholds', default=[0.5, 0.7], multiple=True)
+# logging
+@click.option('--logdir', default="./logs/test", type=str)
+# scripts only
+@click.option('--draw_rec', default=5)
+@click.option('--draw_iou', default=0.7)
+def test(**kwargs):
+    torch.multiprocessing.set_sharing_strategy('file_system')
+    config = AttrDict(**kwargs)
+    device = torch.device('cuda:0')
 
-
-def testing_loop(
-    seed: int,
-    # Dataset
-    TrainDataset: str,
-    train_ann_file: str,
-    train_template_file: str,
-    TestDataset: str,
-    test_ann_file: str,
-    feat_file: str,
-    num_init_clips: int,
-    # model
-    num_clips: int,
-    conv1d_in_channel: int,
-    conv1d_out_channel: int,
-    conv1d_pool_kernel_size: int,
-    conv1d_pool_kernel_stride: int,
-    conv2d_in_channel: int,
-    conv2d_hidden_channel: int,
-    conv2d_kernel_size: int,
-    conv2d_num_layers: int,
-    joint_space_size: int,
-    # iou loss
-    min_iou: float,
-    max_iou: float,
-    iou_weight: float,
-    # contrastive loss
-    tau_video: float,
-    tau_query: float,
-    neg_video_iou: float,
-    pos_video_topk: int,
-    inter: bool,
-    intra: bool,
-    margin: float,
-    contrastive_weight: float,
-    # optimizer
-    base_lr: float,
-    bert_lr: float,
-    batch_size: int,
-    epochs: int,
-    bert_freeze_epoch: int,
-    clip_grad_norm: float,
-    # test
-    test_batch_size: int,
-    nms_threshold: float,
-    rec_metrics: List[float],
-    iou_metrics: List[float],
-    # logging
-    logdir: str,
-    kwargs: Dict,
-):
-    set_seed(seed)
-    os.makedirs(logdir, exist_ok=False)
-    json.dump(kwargs, open(os.path.join(logdir, 'config.json'), "w"), indent=4)
-    writer = SummaryWriter(os.path.join(logdir, "train"))
-    test_writer = SummaryWriter(os.path.join(logdir, "test"))
-
-    train_dataset = construct_class(
-        TrainDataset,
-        ann_file=train_ann_file,
-        template_file=train_template_file,
-        num_clips=num_clips,
-        feat_file=feat_file,
-        num_init_clips=num_init_clips,
+    dataset = construct_class(
+        config.TestDataset,
+        ann_file=config.test_ann_file,
+        feat_file=config.feat_file,
+        num_init_clips=config.num_init_clips,
     )
-    train_loader = DataLoader(
-        dataset=train_dataset,
-        batch_size=batch_size,
-        collate_fn=train_dataset.collate_fn,
-        shuffle=True,
-        num_workers=min(torch.get_num_threads(), 8),
-        drop_last=True,
-    )
-
-    test_dataset = construct_class(
-        TestDataset,
-        ann_file=test_ann_file,
-        num_clips=num_clips,
-        feat_file=feat_file,
-        num_init_clips=num_init_clips,
-    )
-    test_loader = DataLoader(
-        dataset=test_dataset,
-        batch_size=test_batch_size,
-        collate_fn=test_dataset.collate_fn,
+    loader = DataLoader(
+        dataset=dataset,
+        batch_size=config.test_batch_size // dist.get_world_size(),
         shuffle=False,
+        collate_fn=dataset.collate_fn,
         num_workers=min(torch.get_num_threads(), 8),
-    )
-
-    loss_bce_fn = ScaledIoULoss(min_iou, max_iou)
-    loss_con_fn = ContrastiveLoss(
-        T_v=tau_video,
-        T_q=tau_query,
-        neg_video_iou=neg_video_iou,
-        pos_video_topk=pos_video_topk,
-        inter=inter,
-        intra=intra,
     )
 
     model = MMN(
-        conv1d_in_channel=conv1d_in_channel,
-        conv1d_out_channel=conv1d_out_channel,
-        conv1d_pool_kerenl_size=conv1d_pool_kernel_size,
-        conv1d_pool_stride_size=conv1d_pool_kernel_stride,
-        conv2d_in_dim=num_clips,
-        conv2d_in_channel=conv2d_in_channel,
-        conv2d_hidden_channel=conv2d_hidden_channel,
-        conv2d_kernel_size=conv2d_kernel_size,
-        conv2d_num_layers=conv2d_num_layers,
-        joint_space_size=joint_space_size,
+        feat1d_in_channel=config.feat_channel,
+        feat1d_out_channel=config.feat1d_out_channel,
+        feat1d_pool_kerenl_size=config.feat1d_pool_kerenl_size,
+        feat1d_pool_stride_size=config.num_init_clips // config.num_clips,
+        feat2d_pool_counts=config.feat2d_pool_counts,
+        conv2d_hidden_channel=config.conv2d_hidden_channel,
+        conv2d_kernel_size=config.conv2d_kernel_size,
+        conv2d_num_layers=config.conv2d_num_layers,
+        joint_space_size=config.joint_space_size,
     ).to(device)
+    ckpt = torch.load(os.path.join(config.logdir, 'best.pth'))
+    model.load_state_dict(ckpt['model'])
 
-    # TODO: DDP
-    bert_params = []
-    base_params = []
-    for name, params in model.named_parameters():
-        if 'bert' in name:
-            bert_params.append(params)
-        else:
-            base_params.append(params)
+    vis_path = os.path.join(
+        config.logdir,
+        'vis',
+        recall_name(config.draw_rec, config.draw_iou))
+    os.makedirs(vis_path, exist_ok=True)
 
-    optimizer = optim.AdamW([
-        {'params': base_params, 'lr': base_lr},
-        {'params': bert_params, 'lr': bert_lr}
-    ], betas=(0.9, 0.99), weight_decay=1e-5)
-
-    # evaluate test set before training to get initial recall
-    test_results = inference_loop(model, test_loader)
-    test_recalls, _ = evaluate(
-        test_results,
-        nms_threshold,
-        rec_metrics,
-        iou_metrics,
-    )
-    write_recall_to_tensorboard(test_writer, test_recalls, step=0)
-    print_table(epoch=0, recalls_dict={'test': test_recalls})
-
-    step = 0
-    for epoch in range(epochs):
-        model.train()
-
-        # freeze BERT parameters for the first few epochs
-        if epoch < bert_freeze_epoch:
-            ber_requires_grad = False
-        else:
-            ber_requires_grad = True
-        for param in bert_params:
-            param.requires_grad_(ber_requires_grad)
-
-        writer.add_scalar("lr/base", optimizer.param_groups[0]["lr"], step)
-        writer.add_scalar("lr/bert", optimizer.param_groups[1]["lr"], step)
-
-        pbar = tqdm(        # progress bar for each epoch
-            train_loader,   # length is determined by the number of batches
-            ncols=0,        # disable bar, only show percentage
-            leave=False,    # when the loop is finished, the bar will be removed
-            desc=f"Epoch {epoch + 1}",
+    model.eval()
+    results_recall = []
+    results_ap = []
+    for batch, info in tqdm(loader, ncols=0, leave=False, desc="Inferencing"):
+        batch = {key: value.to(device) for key, value in batch.items()}
+        with torch.no_grad():
+            *_, scores2ds, mask2d = model(**batch)
+            scores2ds = scores2ds.cpu()
+            mask2d = mask2d.cpu()
+        batch = {key: value.cpu() for key, value in batch.items()}
+        result_recall = prepare_recall(
+            scores2ds,
+            batch['tgt_moments'],
+            batch['num_targets'],
+            mask2d,
+            config.nms_threshold,
+            config.num_moments,
         )
-        train_results = []  # for recall calculation
-        for batch, info in pbar:
-            batch = {key: value.to(device) for key, value in batch.items()}
-            video_feats, query_feats, sents_feats, scores2d = model(**batch)
-
-            loss_iou = loss_bce_fn(scores2d, batch["iou2d"])
-            if contrastive_weight != 0:
-                (
-                    loss_inter_video,
-                    loss_inter_query,
-                    loss_intra_video,
-                    loss_intra_query,
-                ) = loss_con_fn(
-                    video_feats,
-                    query_feats,
-                    sents_feats,
-                    iou2d=batch["iou2d"],
-                    iou2ds=batch["iou2ds"],
-                    num_targets=batch["num_targets"],
-                )
-
-                loss_con = torch.stack([
-                    loss_inter_video,
-                    loss_inter_query,
-                    loss_intra_video,
-                    loss_intra_query,
-                ]).sum()
-            else:
-                loss_inter_video = torch.zeros((), device=device)
-                loss_inter_query = torch.zeros((), device=device)
-                loss_intra_video = torch.zeros((), device=device)
-                loss_intra_query = torch.zeros((), device=device)
-                loss_con = torch.zeros((), device=device)
-
-            loss = loss_iou * iou_weight + loss_con * contrastive_weight
-
-            optimizer.zero_grad()
-            loss.backward()
-            if clip_grad_norm > 0:
-                clip_grad_norm_(
-                    model.parameters(), clip_grad_norm)
-            optimizer.step()
-
-            # save results for recall calculation
-            train_results.append({
-                'scores2d': scores2d.detach().cpu(),
-                **info,
-            })
-
-            # save loss to tensorboard
-            step += 1
-            writer.add_scalar('loss/total', loss.cpu(), step)
-            writer.add_scalar('loss/iou', loss_iou.cpu(), step)
-            writer.add_scalar('loss/inter_video', loss_inter_video.cpu(), step)
-            writer.add_scalar('loss/inter_query', loss_inter_query.cpu(), step)
-            writer.add_scalar('loss/intra_video', loss_intra_video.cpu(), step)
-            writer.add_scalar('loss/intra_query', loss_intra_query.cpu(), step)
-            # update progress bar
-            pbar.set_postfix_str(", ".join([
-                f"loss: {loss.item():.2f}",
-                f"iou: {loss_iou.item():.2f}",
-                f"[Intra] v: {loss_intra_video.item():.2f}",
-                f"q: {loss_intra_query.item():.2f}",
-                f"[Inter] v: {loss_inter_video.item():.2f}",
-                f"q: {loss_inter_query.item():.2f}",
-            ]))
-        pbar.close()
-
-        # evaluate train set
-        train_recalls, _ = evaluate(
-            train_results,
-            nms_threshold,
-            rec_metrics,
-            iou_metrics,
+        results_recall.append(result_recall)
+        result_ap = prepare_mAP(
+            scores2ds,
+            batch['tgt_moments'],
+            batch['num_targets'],
+            mask2d,
+            config.nms_threshold,
         )
-        # save training recall to tensorboard
-        write_recall_to_tensorboard(writer, train_recalls, step)
+        results_ap.append(result_ap)
 
-        # evaluate test set
-        test_results = inference_loop(model, test_loader)
-        test_recalls, _ = evaluate(
-            test_results,
-            nms_threshold,
-            rec_metrics,
-            iou_metrics,
-        )
-        # save testing recall to tensorboard
-        write_recall_to_tensorboard(test_writer, test_recalls, step)
+        # ploting batch
+        # iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips).cpu()
+        # for batch_idx in range(len(scores2ds)):
+        #     ious = result['ious'][batch_idx]
+        #     if ious[:config.draw_rec].max() < config.draw_iou:
+        #         iou2d = iou2ds[batch_idx]                                       # Gt
+        #         scores2d = scores2ds[batch_idx]                                 # Pred
+        #         moment = batch['tgt_moments'][batch_idx]
+        #         moment = (moment * config.num_clips).round().long()             # Gt
+        #         nms_moments = result['nms_moments'][batch_idx]
+        #         nms_moments = (nms_moments * config.num_clips).round().long()   # Pred
+        #         path = os.path.join(vis_path, info['vid_sid'][batch_idx])
+        #         plot_moments_on_iou2d(
+        #             iou2d, scores2d, moment, nms_moments, path, mask2d)
+    recall = calculate_recall(
+        results_recall, config.num_moments, config.iou_thresholds)
+    print_table(epoch=0, rows={'test': recall})
+    mAPs = calculate_mAP(results_ap)
+    print_table(epoch=0, rows={'test': mAPs})
 
-        # save evaluation results to file
-        write_recall_to_file(
-            os.path.join(logdir, "recall.json"),
-            train_recalls,
-            test_recalls,
-            step,
-            epoch,
-        )
 
-        # save model every epoch
-        state = {
-            "model": model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-        }
-        path = os.path.join(logdir, f"epoch_{epoch + 1}.pth")
-        torch.save(state, path)
+def plot_moments_on_iou2d(iou2d, scores2d, moment, nms_moments, path, mask2d):
+    N, _ = iou2d.shape
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(9, 4))
 
-        # print to terminal
-        print_table(epoch + 1, {"train": train_recalls, "test": test_recalls})
+    ticks = (torch.arange(0, N, 5) + 0.5).numpy()
+    ticklabels = [f"{idx:d}" for idx in range(0, N, 5)]
 
-        writer.flush()
-        test_writer.flush()
+    # plot iou2d and nms_moments on left subplot
+    annot = [["" for _ in range(N)] for _ in range(N)]
+    for i, (st, ed) in enumerate(nms_moments):
+        annot[st][ed - 1] = f"{i+1:d}"
+    sns.heatmap(
+        ax=ax1,
+        data=iou2d.numpy(),
+        annot=annot,
+        mask=~mask2d.numpy(),
+        vmin=0, vmax=1, cmap="plasma", fmt="s", linewidths=0.5, square=True,
+        annot_kws={"ha": "center", "va": "center_baseline"})
+    ax1.set_title("Groundtruth IoU and Predicted Moments")
+
+    # plot scores2d and groundtruth moment on right subplot
+    annot = [["" for _ in range(N)] for _ in range(N)]
+    annot[moment[0]][moment[1] - 1] = "x"
+    sns.heatmap(
+        ax=ax2,
+        data=scores2d.numpy(),
+        annot=annot,
+        mask=~mask2d.numpy(),
+        vmin=0, vmax=1, cmap="plasma", fmt="s", linewidths=0.5, square=True,
+        annot_kws={"ha": "center", "va": "center_baseline"})
+    ax2.set_title("Scores and Groundtruth Moment")
+
+    for ax in [ax1, ax2]:
+        # xlabel and xticks on top
+        ax.set_facecolor("lightgray")
+        ax.set_xlabel(r"End Time$\rightarrow$", loc='left', fontsize=10)
+        ax.set_ylabel(r"$\leftarrow$Start Time", loc='top', fontsize=10)
+        ax.set_xticks(ticks, ticklabels)
+        ax.set_yticks(ticks, ticklabels, rotation='horizontal')
+        ax.tick_params(labelbottom=False, labeltop=True, bottom=False, top=True)
+        ax.xaxis.set_label_position('top')
+
+    fig.tight_layout()
+    fig.savefig(path, bbox_inches='tight')
+    plt.close(fig)
+
+
+if __name__ == "__main__":
+    test()

@@ -1,8 +1,11 @@
 __pycache__
 .python-version
 
-logs
+build
+dist
+*.egg-info
 
-C3D_model/
 data
 predictions
+
+logs

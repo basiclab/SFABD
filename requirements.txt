@@ -1,5 +1,8 @@
 click
+Cython==3.0.0a11
 h5py
+matplotlib
+seaborn
 tqdm
 tensorboard
 tensorboardX

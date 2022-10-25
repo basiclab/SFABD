@@ -1,19 +1,17 @@
 import h5py
 import torch
 
-from src.datasets.base import CollateBase, aggregate_feats
+from src.datasets.base import CollateBase
+from src.utils import aggregate_feats
 
 
 class ActivityNet(CollateBase):
     def __init__(
         self,
-        # annotation related
-        ann_file,           # path to statically generated multi-target annotation file
-        num_clips,          # number of final clips, e.g., 32 for Charades
-        # feature related
+        ann_file,           # path to annotation file (.json)
+        num_clips,          # number of final clips, e.g., 64 for ActivityNet
         feat_file,          # path to feature file
-        num_init_clips,     # number of initial clips. e.g., 64 for Charades
-        **dummy,
+        num_init_clips,     # number of initial clips. e.g., 256 for ActivityNet
     ):
         super().__init__(ann_file, num_clips)
         self.feat_file = feat_file
