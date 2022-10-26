@@ -5,100 +5,88 @@ import torch.nn.functional as F
 
 
 def iou(
-    moments1: torch.Tensor,             # [B, 2]
-    moments2: torch.Tensor              # [B, n, 2] or [1, n, 2]
-) -> torch.Tensor:                      # [B, n]
-    """Batch IoU calculation."""
-    st1 = moments1[:, 0:1]              # [B, 1]
-    ed1 = moments1[:, 1:2]              # [B, 1]
-    st2 = moments2[..., 0]              # [B, n]
-    ed2 = moments2[..., 1]              # [B, n]
-    inter = torch.minimum(ed1, ed2) - torch.maximum(st1, st2)
-    union = torch.maximum(ed1, ed2) - torch.minimum(st1, st2)
-    return inter.clamp(min=0) / union   # [B, n]
+    moments1: torch.Tensor,                                     # [N, 2]
+    moments2: torch.Tensor                                      # [M, 2]
+) -> torch.Tensor:                                              # [N, M]
+    st1 = moments1[:, 0:1]                                      # [N, 1]
+    ed1 = moments1[:, 1:2]                                      # [N, 1]
+    st2 = moments2[:, 0:1].t()                                  # [1, M]
+    ed2 = moments2[:, 1:2].t()                                  # [1, M]
+    inter = torch.minimum(ed1, ed2) - torch.maximum(st1, st2)   # [N, M]
+    union = torch.maximum(ed1, ed2) - torch.minimum(st1, st2)   # [N, M]
+    return inter.clamp(min=0) / union                           # [N, M]
+
+
+def nms_worker(
+    moments: torch.Tensor,      # [M, 2]
+    scores1d: torch.Tensor,     # [M]
+    threshold: float,
+):
+    order = scores1d.argsort(descending=True)
+    scores1d = scores1d[order]
+    moments = moments[order]
+    ious = iou(moments, moments)
+
+    try:
+        # 5x faster
+        from boost import boost_suppression
+        suppressed = boost_suppression(ious, threshold)
+    except ImportError:
+        suppressed = torch.zeros(len(ious), dtype=torch.bool).to(ious.device)
+        for i in range(len(ious)):
+            if suppressed[i]:
+                continue
+            suppressed = suppressed | (ious[i] >= threshold)
+            suppressed[i] = False
+
+    return moments[~suppressed], scores1d[~suppressed]
 
 
 def nms(
-    scores2ds: torch.Tensor,                        # [B, N, N]
-    mask2d: torch.Tensor,                           # [N, N]
+    moments: Union[List[torch.Tensor], torch.Tensor],                       # [S, M, 2]
+    scores1d: Union[List[torch.Tensor], torch.Tensor],                      # [S, M]
     threshold: float,
-    pad: int = None,
-) -> Union[List[torch.Tensor], torch.Tensor]:       # List of [?, 2], [B, pad, 2]
-    """Batch non-maximum suppression.
+) -> Tuple[List[torch.tensor], List[torch.tensor]]:
+    """batch non-maximum suppression."""
+    out_moments = []
+    out_scores1ds = []
+    num_proposals = []
+    for i in range(len(moments)):
+        moment, score1d = nms_worker(moments[i], scores1d[i], threshold)
+        out_moments.append(moment)
+        out_scores1ds.append(score1d)
+        num_proposals.append(len(score1d))
 
-    Returns:
-        Batch of list of moments that are not suppressed if `pad` is None.
-        Otherwise, return a tensor of shape [B, pad, 2].
-    """
+    return {
+        "out_moments": torch.cat(out_moments),                              # [P, 2]
+        "out_scores1ds": torch.cat(out_scores1ds),                          # [P]
+        "num_proposals": torch.tensor(num_proposals).to(scores1d.device),  # [S]
+    }
+
+
+def scores2ds_to_moments(
+    scores2ds: torch.Tensor,                                            # [B, N, N]
+    mask2d: torch.Tensor,                                               # [N, N]
+) -> Tuple[torch.Tensor, torch.Tensor]:                                 # [P, 2]
     B, N, _ = scores2ds.shape
-    P = (N + 1) * N // 2
-
-    # shared suppresseion pattern
-    moments = mask2d.nonzero()                                              # [P, 2]
-    scores1ds = scores2ds[:, moments[:, 0], moments[:, 1]]                  # [B, P]
-    moments[:, 1] += 1                                                      # [P, 2]
-    moments = moments / N                                                   # [P, 2]
-    ious = iou(moments, moments.unsqueeze(0))                               # [P, P]
-    ious_mask = ious > threshold
-    ious_mask[range(P), range(P)] = False                                   # [P, P]
-
-    # nms
-    ranks = scores1ds.argsort(dim=1, descending=True)
-    suppressed = scores1ds.new_zeros(B, P, dtype=torch.bool)                # [B, P]
-    # iterate from highest score to lowest score
-    for ith in range(P):
-        moment_idx = ranks[:, ith]                                          # [B]
-        moment_suppressed = suppressed[torch.arange(B), moment_idx]         # [B]
-        moment_not_suppressed = ~moment_suppressed.unsqueeze(1)             # [B, 1]
-        next_suppressed = ious_mask[moment_idx] & moment_not_suppressed     # [B, P]
-        suppressed = suppressed | next_suppressed
-
-    nms_moments = []
-    nms_scores1ds = []
-    for i in range(B):
-        rank = ranks[i]
-        remain_mask = ~suppressed[i]
-        remain_rank = rank[remain_mask[rank]]
-        nms_moments.append(moments[remain_rank])
-        nms_scores1ds.append(scores1ds[i, remain_rank])
-
-    # padding or truncate
-    if pad is not None:
-        for i in range(B):
-            nms_moments[i] = nms_moments[i][:pad]
-            nms_moments[i] = torch.nn.functional.pad(
-                nms_moments[i], (0, 0, 0, pad - nms_moments[i].shape[0]))
-            nms_scores1ds[i] = nms_scores1ds[i][:pad]
-            nms_scores1ds[i] = torch.nn.functional.pad(
-                nms_scores1ds[i], (0, pad - nms_scores1ds[i].shape[0]))
-        nms_moments = torch.stack(nms_moments, dim=0)
-        nms_scores1ds = torch.stack(nms_scores1ds, dim=0)
-
-    return nms_moments, nms_scores1ds
-
-
-def scores2ds_to_scores1ds(
-    scores2ds: torch.Tensor,                # [B, N, N]
-    mask2d: torch.Tensor,                   # [N, N]
-) -> Tuple[torch.Tensor, torch.Tensor]:     # [P, 2]
-    _, N, _ = scores2ds.shape
     moments = mask2d.nonzero()                                          # [P, 2]
     scores1ds = scores2ds[:, moments[:, 0], moments[:, 1]]              # [B, P]
     moments[:, 1] += 1                                                  # [P, 2]
     moments = moments / N                                               # [P, 2]
-    return scores1ds, moments
+    moments = moments.unsqueeze(0).expand(B, -1, -1)                    # [B, P, 2]
+    return moments, scores1ds
 
 
 def moments_to_iou2ds(
-    target_moment: torch.Tensor,    # [B, 2]
-    num_clips: int,                 # N = num_clips
-) -> torch.Tensor:                  # [B, N, N]
+    target_moment: torch.Tensor,                                        # [B, 2]
+    num_clips: int,                                                     # N = num_clips
+) -> torch.Tensor:                                                      # [B, N, N]
     """ Convert batch moment to iou2d."""
     B, _ = target_moment.shape
     moments = target_moment.new_ones(num_clips, num_clips).nonzero()    # [P, 2]
     moments[:, 1] += 1                                                  # [P, 2]
     moments = moments / num_clips                                       # [P, 2]
-    iou2d = iou(target_moment, moments.unsqueeze(0))                    # [B, P]
+    iou2d = iou(target_moment, moments)                                 # [B, P]
     iou2d = iou2d.view(B, num_clips, num_clips)                         # [B, N, N]
     assert (iou2d >= 0).all() and (iou2d <= 1).all()
     return iou2d
@@ -113,14 +101,6 @@ def iou2ds_to_iou2d(
     S = num_targets.shape[0]
     assert M >= S
     assert M == num_targets.sum().item()
-
-    # UserWarning: scatter_reduce() is in beta and the API may change at any time.
-    # scatter_idx = torch.arange(S).to(iou2ds.device)
-    # scatter_idx = scatter_idx.repeat_interleave(num_targets)                # [S]
-    # scatter_idx = scatter_idx.unsqueeze(1).unsqueeze(1).expand(-1, N, N)    # [S, N, N]
-    # iou2d = iou2ds.new_zeros(S, N, N)
-    # iou2d.scatter_reduce_(
-    #     0, scatter_idx, iou2ds, reduce="amax", include_self=False)
 
     iou2d = []
     start = 0
@@ -154,13 +134,13 @@ def aggregate_feats(
                 feats_bucket.append(feats[s:e].max(dim=0)[0])
         else:
             feats_bucket.append(feats[s])
-    return torch.stack(feats_bucket, dim=1)                     # channel first
+    return torch.stack(feats_bucket, dim=1)
 
 
 if __name__ == '__main__':
     torch.set_printoptions(linewidth=200)
 
-    num_clips = 10
+    num_clips = 16
 
     # test moments_to_iou2ds
     for _ in range(10):
@@ -177,4 +157,6 @@ if __name__ == '__main__':
     # test nms
     for _ in range(10):
         scores2ds = torch.rand(16, num_clips, num_clips)
-        new_moments = nms(scores2ds, threshold=0.3, pad=5)
+        mask2d = (torch.rand(num_clips, num_clips) > 0.5).triu()
+        out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
+        pred_moments2 = nms(out_moments, out_scores1ds, threshold=0.3)

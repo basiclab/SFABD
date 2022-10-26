@@ -1,4 +1,5 @@
 import os
+import json
 
 import click
 import matplotlib.pyplot as plt
@@ -9,10 +10,10 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 import src.dist as dist
-from src.evaluation import (
-    prepare_recall, prepare_mAP, calculate_recall, calculate_mAP, recall_name)
+from src.evaluation import calculate_recall, calculate_mAPs, recall_name
 from src.misc import AttrDict, CommandAwareConfig, print_table, construct_class
 from src.models.model import MMN
+from src.utils import nms, scores2ds_to_moments
 
 
 @click.command(cls=CommandAwareConfig('config'), context_settings={'show_default': True})
@@ -83,33 +84,52 @@ def test(**kwargs):
         recall_name(config.draw_rec, config.draw_iou))
     os.makedirs(vis_path, exist_ok=True)
 
+    qid_cnt = 0
     model.eval()
-    results_recall = []
-    results_ap = []
+    pred_moments = []
+    true_moments = []
     for batch, info in tqdm(loader, ncols=0, leave=False, desc="Inferencing"):
         batch = {key: value.to(device) for key, value in batch.items()}
         with torch.no_grad():
             *_, scores2ds, mask2d = model(**batch)
-            scores2ds = scores2ds.cpu()
-            mask2d = mask2d.cpu()
         batch = {key: value.cpu() for key, value in batch.items()}
-        result_recall = prepare_recall(
-            scores2ds,
-            batch['tgt_moments'],
-            batch['num_targets'],
-            mask2d,
-            config.nms_threshold,
-            config.num_moments,
-        )
-        results_recall.append(result_recall)
-        result_ap = prepare_mAP(
-            scores2ds,
-            batch['tgt_moments'],
-            batch['num_targets'],
-            mask2d,
-            config.nms_threshold,
-        )
-        results_ap.append(result_ap)
+
+        out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
+        pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
+
+        # pred_moments_batch = nms(scores2ds, mask2d, config.nms_threshold)
+        pred_moments_batch = {k: v.cpu() for k, v in pred_moments_batch.items()}
+        pred_moments.append(pred_moments_batch)
+        true_moments_batch = {
+            'tgt_moments': batch['tgt_moments'],
+            'num_targets': batch['num_targets'],
+        }
+        true_moments.append(true_moments_batch)
+
+        out_moments = pred_moments_batch['out_moments']
+        out_scores1ds = pred_moments_batch['out_scores1ds']
+        num_proposals = iter(pred_moments_batch['num_proposals'])
+        with open('pred.jsonl', 'a') as f:
+            shift_p = 0
+            for i in range(len(info['vid'])):
+                vid = info['vid'][i]
+                duration = info['duration'][i]
+                for sentence in info['sentences'][i]:
+                    num_p = next(num_proposals)
+                    pred_relevant_windows = []
+                    moments = out_moments[shift_p: shift_p + num_p]
+                    scores1d = out_scores1ds[shift_p: shift_p + num_p]
+                    for moment, score in zip(moments, scores1d):
+                        pred_relevant_windows.append(
+                            (moment * duration).tolist() + [score.item()])
+                    f.write(json.dumps({
+                        "qid": qid_cnt,
+                        "query": sentence,
+                        "vid": vid,
+                        "pred_relevant_windows": pred_relevant_windows,
+                    }) + "\n")
+                    qid_cnt += 1
+                    shift_p += num_p
 
         # ploting batch
         # iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips).cpu()
@@ -126,9 +146,10 @@ def test(**kwargs):
         #         plot_moments_on_iou2d(
         #             iou2d, scores2d, moment, nms_moments, path, mask2d)
     recall = calculate_recall(
-        results_recall, config.num_moments, config.iou_thresholds)
+        pred_moments, true_moments, config.num_moments, config.iou_thresholds)
     print_table(epoch=0, rows={'test': recall})
-    mAPs = calculate_mAP(results_ap)
+
+    mAPs = calculate_mAPs(pred_moments, true_moments)
     print_table(epoch=0, rows={'test': mAPs})
 
 
@@ -181,3 +202,15 @@ def plot_moments_on_iou2d(iou2d, scores2d, moment, nms_moments, path, mask2d):
 
 if __name__ == "__main__":
     test()
+
+
+# +----------+-------------+-------------+-------------+-------------+
+# | Epoch  0 | R@1,IoU=0.5 | R@1,IoU=0.7 | R@5,IoU=0.5 | R@5,IoU=0.7 |
+# +----------+-------------+-------------+-------------+-------------+
+# |   test   |    46.263   |    27.392   |    81.640   |    57.876   |
+# +----------+-------------+-------------+-------------+-------------+
+# +----------+---------+----------+----------+
+# | Epoch  0 | avg_mAP | mAP@0.50 | mAP@0.75 |
+# +----------+---------+----------+----------+
+# |   test   |  34.439 |  61.021  |  32.890  |
+# +----------+---------+----------+----------+

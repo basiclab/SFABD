@@ -100,6 +100,8 @@ class CollateBase(torch.utils.data.Dataset):
             'tgt_moments': torch.cat(batch['tgt_moments'], dim=0),
         }, {
             'vid': batch['vid'],
+            'sentences': batch['sentences'],
+            'duration': batch['duration'],
         }
 
 
