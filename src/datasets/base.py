@@ -109,7 +109,7 @@ if __name__ == '__main__':
     from torch.utils.data import DataLoader
 
     from src.datasets.charades import Charades
-    from datasets.qvhighlights import QVHighlights
+    from src.datasets.qvhighlights import QVHighlights
 
     def test(dataset: CollateBase):
         def show_dict(data):
@@ -145,26 +145,42 @@ if __name__ == '__main__':
         show_dict(info)
         print('-' * 80)
 
-    # print("Charades-STA train")
-    # dataset = Charades(
-    #     ann_file='data/CharadesSTA/train.json',
-    #     feat_file="./data/CharadesSTA/vgg_rgb_features.hdf5",
-    #     num_init_clips=32,
-    # )
-    # test(dataset)
+    print("Charades-STA train")
+    dataset = Charades(
+        ann_file='data/CharadesSTA/train.json',
+        feat_file="./data/CharadesSTA/vgg_rgb_features.hdf5",
+        num_init_clips=32,
+    )
+    test(dataset)
 
-    # print("Charades-STA test")
-    # dataset = Charades(
-    #     ann_file='data/CharadesSTA/test.json',
-    #     feat_file="./data/CharadesSTA/vgg_rgb_features.hdf5",
-    #     num_init_clips=32,
-    # )
-    # test(dataset)
+    print("Charades-STA test")
+    dataset = Charades(
+        ann_file='data/CharadesSTA/test.json',
+        feat_file="./data/CharadesSTA/vgg_rgb_features.hdf5",
+        num_init_clips=32,
+    )
+    test(dataset)
+
+    print("Charades-STA Multitarget train")
+    dataset = Charades(
+        ann_file='data/CharadesSTA/train_multitarget.json',
+        feat_file="./data/CharadesSTA/Charades_C3D.hdf5",
+        num_init_clips=32,
+    )
+    test(dataset)
+
+    print("Charades-STA Multitarget test")
+    dataset = Charades(
+        ann_file='data/CharadesSTA/test_multitarget.json',
+        feat_file="./data/CharadesSTA/Charades_C3D.hdf5",
+        num_init_clips=32,
+    )
+    test(dataset)
 
     print("QVHighlight train")
     dataset = QVHighlights(
         ann_file='data/QVHighlights/train.json',
-        feat_file="./data/QVHighlights/QVHighlights_c3d.hdf5",
+        feat_file="./data/QVHighlights/QVHighlights_C3D.hdf5",
         num_init_clips=256,
     )
     test(dataset)
@@ -172,7 +188,7 @@ if __name__ == '__main__':
     print("QVHighlight val")
     dataset = QVHighlights(
         ann_file='data/QVHighlights/val.json',
-        feat_file="./data/QVHighlights/QVHighlights_c3d.hdf5",
+        feat_file="./data/QVHighlights/QVHighlights_C3D.hdf5",
         num_init_clips=256,
     )
     test(dataset)

@@ -38,9 +38,9 @@ def get_device():
     return torch.device(f"cuda:{get_rank()}")
 
 
-def all_gather(tensor: torch.Tensor) -> List[torch.Tensor]:
+def gather(tensor: torch.Tensor) -> List[torch.Tensor]:
     """
-    Run all_gather on arbitrary length tensors
+    Run gather on arbitrary length tensors
     Args:
         tensor: tensor of shape (N, ...)
     Returns:
@@ -73,10 +73,10 @@ def all_gather(tensor: torch.Tensor) -> List[torch.Tensor]:
     return tensor_list
 
 
-def all_gather_dict(data_dict, to_cpu=True):
+def gather_dict(data_dict, to_cpu=True):
     data = {}
     for key, value in data_dict.items():
-        data[key] = torch.cat(all_gather(value), dim=0)
+        data[key] = torch.cat(gather(value), dim=0)
         if to_cpu:
             data[key] = data[key].cpu()
     return data

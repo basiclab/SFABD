@@ -1,5 +1,4 @@
 import os
-import json
 
 import click
 import matplotlib.pyplot as plt
@@ -38,8 +37,8 @@ from src.utils import nms, scores2ds_to_moments
 # test
 @click.option('--test_batch_size', default=64)
 @click.option('--nms_threshold', default=0.5)
-@click.option('--num_moments', default=[1, 5, 10], multiple=True)
-@click.option('--iou_thresholds', default=[0.5, 0.7], multiple=True)
+@click.option('--recall_Ns', default=[1, 5, 10], multiple=True)
+@click.option('--recall_IoUs', default=[0.5, 0.7], multiple=True)
 # logging
 @click.option('--logdir', default="./logs/test", type=str)
 # scripts only
@@ -84,7 +83,6 @@ def test(**kwargs):
         recall_name(config.draw_rec, config.draw_iou))
     os.makedirs(vis_path, exist_ok=True)
 
-    qid_cnt = 0
     model.eval()
     pred_moments = []
     true_moments = []
@@ -92,44 +90,18 @@ def test(**kwargs):
         batch = {key: value.to(device) for key, value in batch.items()}
         with torch.no_grad():
             *_, scores2ds, mask2d = model(**batch)
-        batch = {key: value.cpu() for key, value in batch.items()}
 
         out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
         pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
-
-        # pred_moments_batch = nms(scores2ds, mask2d, config.nms_threshold)
         pred_moments_batch = {k: v.cpu() for k, v in pred_moments_batch.items()}
         pred_moments.append(pred_moments_batch)
+
+        batch = {key: value.cpu() for key, value in batch.items()}
         true_moments_batch = {
             'tgt_moments': batch['tgt_moments'],
             'num_targets': batch['num_targets'],
         }
         true_moments.append(true_moments_batch)
-
-        out_moments = pred_moments_batch['out_moments']
-        out_scores1ds = pred_moments_batch['out_scores1ds']
-        num_proposals = iter(pred_moments_batch['num_proposals'])
-        with open('pred.jsonl', 'a') as f:
-            shift_p = 0
-            for i in range(len(info['vid'])):
-                vid = info['vid'][i]
-                duration = info['duration'][i]
-                for sentence in info['sentences'][i]:
-                    num_p = next(num_proposals)
-                    pred_relevant_windows = []
-                    moments = out_moments[shift_p: shift_p + num_p]
-                    scores1d = out_scores1ds[shift_p: shift_p + num_p]
-                    for moment, score in zip(moments, scores1d):
-                        pred_relevant_windows.append(
-                            (moment * duration).tolist() + [score.item()])
-                    f.write(json.dumps({
-                        "qid": qid_cnt,
-                        "query": sentence,
-                        "vid": vid,
-                        "pred_relevant_windows": pred_relevant_windows,
-                    }) + "\n")
-                    qid_cnt += 1
-                    shift_p += num_p
 
         # ploting batch
         # iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips).cpu()
@@ -145,8 +117,9 @@ def test(**kwargs):
         #         path = os.path.join(vis_path, info['vid_sid'][batch_idx])
         #         plot_moments_on_iou2d(
         #             iou2d, scores2d, moment, nms_moments, path, mask2d)
+
     recall = calculate_recall(
-        pred_moments, true_moments, config.num_moments, config.iou_thresholds)
+        pred_moments, true_moments, config.recall_Ns, config.recall_IoUs)
     print_table(epoch=0, rows={'test': recall})
 
     mAPs = calculate_mAPs(pred_moments, true_moments)

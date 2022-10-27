@@ -77,7 +77,6 @@ def calculate_recall(
     ious = torch.cat(ious)
 
     recall = {}
-    torch.save(ious[:, 0], 'ious.pt')
     for recall_n in recall_Ns:
         for recall_iou in recall_IoUs:
             max_ious = ious[:, :recall_n].max(dim=1).values
@@ -91,7 +90,7 @@ def calculate_APs_worker(
     tgt_moments: torch.Tensor,                      # [M, 2]
     out_moments: torch.Tensor,                      # [N, 2]
     out_scores1ds: torch.Tensor,                    # [N]
-    mAP_IoUs: List[float],                          # [K]
+    mAP_ious: List[float],                          # [K]
     max_proposals: int,
 ) -> torch.Tensor:                                  # [K]
     ious = iou(
@@ -107,10 +106,10 @@ def calculate_APs_worker(
         # 10x faster
         from boost import boost_calculate_APs
         APs = boost_calculate_APs(
-            out_ious, out_tgts, mAP_IoUs, len(tgt_moments))
+            out_ious, out_tgts, mAP_ious, len(tgt_moments))
     except ImportError:
         APs = []
-        for mAP_iou in mAP_IoUs:
+        for mAP_iou in mAP_ious:
             tp_cnt = []
             tp_set = set()
             for out_tgt, out_iou in zip(out_tgts, out_ious):
@@ -133,7 +132,7 @@ def calculate_APs_worker(
 def calculate_mAPs(
     pred_moments: List[Dict[str, torch.Tensor]],
     true_moments: List[Dict[str, torch.Tensor]],
-    mAP_IoUs: List[float] = torch.linspace(0.5, 0.95, 10),
+    mAP_ious: List[float] = torch.linspace(0.5, 0.95, 10),
     max_proposals: int = 10,
 ) -> float:
     pred_moments = batchs2results(pred_moments)
@@ -159,11 +158,11 @@ def calculate_mAPs(
 
     APs = []
     for data in calc_buffer:
-        APs.append(calculate_APs_worker(*data, mAP_IoUs, max_proposals))
+        APs.append(calculate_APs_worker(*data, mAP_ious, max_proposals))
     mAPs = torch.stack(APs).mean(dim=0)
 
     results = {}
-    for i, mAP_iou in enumerate(mAP_IoUs):
+    for i, mAP_iou in enumerate(mAP_ious):
         results[mAP_name(mAP_iou)] = mAPs[i].item()
 
     return {

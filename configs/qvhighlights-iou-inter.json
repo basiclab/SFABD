@@ -35,7 +35,7 @@
     "clip_grad_norm": 5.0,
     "test_batch_size": 48,
     "nms_threshold": 0.5,
-    "num_moments": [1, 5],
-    "iou_thresholds": [0.5, 0.7],
+    "recall_Ns": [1, 5],
+    "recall_IoUs": [0.5, 0.7],
     "logdir": "./logs/qvhighlights-iou-inter"
 }

@@ -55,8 +55,8 @@ from src.misc import AttrDict, CommandAwareConfig
 # test
 @click.option('--test_batch_size', default=64)
 @click.option('--nms_threshold', default=0.5)
-@click.option('--num_moments', default=[1, 5, 10], multiple=True)
-@click.option('--iou_thresholds', default=[0.5, 0.7], multiple=True)
+@click.option('--recall_Ns', 'recall_Ns', default=[1, 5, 10], multiple=True)
+@click.option('--recall_IoUs', 'recall_IoUs', default=[0.5, 0.7], multiple=True)
 # logging
 @click.option('--logdir', default="./logs/test", type=str)
 @click.option('--best_metric', default="R@1,IoU=0.7")

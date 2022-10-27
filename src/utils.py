@@ -1,4 +1,4 @@
-from typing import List, Union, Tuple
+from typing import List, Union, Tuple, Dict
 
 import torch
 import torch.nn.functional as F
@@ -46,7 +46,7 @@ def nms(
     moments: Union[List[torch.Tensor], torch.Tensor],                       # [S, M, 2]
     scores1d: Union[List[torch.Tensor], torch.Tensor],                      # [S, M]
     threshold: float,
-) -> Tuple[List[torch.tensor], List[torch.tensor]]:
+) -> Dict[str, torch.Tensor]:
     """batch non-maximum suppression."""
     out_moments = []
     out_scores1ds = []
@@ -60,7 +60,7 @@ def nms(
     return {
         "out_moments": torch.cat(out_moments),                              # [P, 2]
         "out_scores1ds": torch.cat(out_scores1ds),                          # [P]
-        "num_proposals": torch.tensor(num_proposals).to(scores1d.device),  # [S]
+        "num_proposals": torch.tensor(num_proposals).to(scores1d.device),   # [S]
     }
 
 
