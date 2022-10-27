@@ -5,6 +5,43 @@ from transformers import DistilBertModel
 from transformers import logging
 
 
+class AggregateVideo(nn.Module):
+    def __init__(self, tgt_num: int):
+        super().__init__()
+        self.tgt_num = tgt_num
+
+    def aggregate_feats(
+        self,
+        video_feats: torch.Tensor,  # [src_num, C]
+    ) -> torch.Tensor:              # [tgt_num, C]
+        """Aggregate the feature of video into fixed shape."""
+
+        src_num, _ = video_feats.shape
+        idxs = torch.arange(0, self.tgt_num + 1) / self.tgt_num * src_num
+        idxs = idxs.round().long()
+        # feats = F.normalize(feats, dim=1)
+        feats_bucket = []
+        for i in range(self.tgt_num):
+            s, e = idxs[i], idxs[i + 1]
+            if s < e:
+                feats_bucket.append(video_feats[s:e].mean(dim=0))
+            else:
+                feats_bucket.append(video_feats[s])
+        return torch.stack(feats_bucket)
+
+    def forward(
+        self,
+        video_feats: torch.Tensor,          # [B, T, C]
+        video_masks: torch.Tensor,          # [B, T]
+    ) -> torch.Tensor:                      # [B, tgt_num, C]
+        out_feats = []
+        for i in range(len(video_feats)):
+            out_feat = self.aggregate_feats(video_feats[i][video_masks[i]])
+            out_feats.append(out_feat)
+        out_feats = torch.stack(out_feats)
+        return out_feats
+
+
 class Conv1dPool(nn.Module):
     def __init__(self, in_channel, out_channel, pool_kernel_size, pool_stride_size):
         super().__init__()

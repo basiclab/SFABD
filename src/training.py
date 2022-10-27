@@ -203,6 +203,7 @@ def training_loop(config: AttrDict):
 
     # model
     model_local = MMN(
+        num_init_clips=config.num_init_clips,
         feat1d_in_channel=config.feat_channel,
         feat1d_out_channel=config.feat1d_out_channel,
         feat1d_pool_kerenl_size=config.feat1d_pool_kerenl_size,

@@ -2,7 +2,6 @@ import h5py
 import torch
 
 from src.datasets.base import CollateBase
-from src.utils import aggregate_feats
 
 
 class ActivityNet(CollateBase):
@@ -23,4 +22,4 @@ class ActivityNet(CollateBase):
             feats = f[anno['vid']]['c3d_features'][:]
             feats = torch.from_numpy(feats).float()
 
-        return aggregate_feats(feats, self.num_init_clips, op_type='avg')
+        return feats

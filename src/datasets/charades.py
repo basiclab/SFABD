@@ -2,7 +2,6 @@ import h5py
 import torch
 
 from src.datasets.base import CollateBase
-from src.utils import aggregate_feats
 
 
 class Charades(CollateBase):
@@ -21,4 +20,4 @@ class Charades(CollateBase):
         with h5py.File(self.feat_file, 'r') as f:
             feats = f[anno['vid']][:]
             feats = torch.from_numpy(feats).float()
-        return aggregate_feats(feats, self.num_init_clips, op_type='avg')
+        return feats

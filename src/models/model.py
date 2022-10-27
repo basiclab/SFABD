@@ -5,12 +5,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from src.models.modules import (
-    Conv1dPool, SparseMaxPool, ProposalConv, LanguageModel)
+    AggregateVideo, Conv1dPool, SparseMaxPool, ProposalConv, LanguageModel)
 
 
 class MMN(nn.Module):
     def __init__(
         self,
+        num_init_clips: int,
         feat1d_in_channel: int,                 # Conv1dPool
         feat1d_out_channel: int = 512,          # Conv1dPool
         feat1d_pool_kerenl_size: int = 2,       # Conv1dPool
@@ -27,6 +28,7 @@ class MMN(nn.Module):
             N: (N)um clips
         """
         super(MMN, self).__init__()
+        self.aggregrate = AggregateVideo(num_init_clips)
         self.video_model = nn.Sequential(
             Conv1dPool(                                     # [B, C, NUM_INIT_CLIPS]
                 feat1d_in_channel,
@@ -72,7 +74,8 @@ class MMN(nn.Module):
 
     def forward(
         self,
-        video_feats: torch.Tensor,          # [B, C, NUM_INIT_CLIPS]
+        video_feats: torch.Tensor,          # [B, T, C]
+        video_masks: torch.Tensor,          # [B, T]
         sents_tokens: torch.Tensor,         # [S, L]
         sents_masks: torch.Tensor,          # [S, L]
         num_sentences: torch.Tensor,        # [B]
@@ -88,6 +91,9 @@ class MMN(nn.Module):
         assert sents_tokens.shape == sents_masks.shape
         assert sents_tokens.shape[0] == num_sentences.sum()
 
+        video_feats = F.normalize(video_feats, dim=-1)              # [B, T, C]
+        video_feats = self.aggregrate(video_feats, video_masks)     # [B, ?, C]
+        video_feats = video_feats.permute(0, 2, 1)                  # [B, C, ?]
         video_feats, mask2d = self.video_model(video_feats)
         sents_feats = self.sents_model(sents_tokens, sents_masks)
 
@@ -114,6 +120,7 @@ if __name__ == '__main__':
         joint_space_size=256,
     ):
         model = MMN(
+            num_init_clips=NUM_INIT_CLIPS,
             feat1d_in_channel=INIT_CHANNEL,
             feat1d_out_channel=feat1d_out_channel,
             feat1d_pool_kerenl_size=feat1d_pool_kerenl_size,
@@ -148,12 +155,15 @@ if __name__ == '__main__':
         assert S == len(sents)
         sents = tokenizer(sents, padding=True, return_tensors="pt")
 
-        video_feats = torch.randn(B, INIT_CHANNEL, NUM_INIT_CLIPS)
+        pad_len = 2 * NUM_INIT_CLIPS + 5
+        video_feats = torch.randn(B, pad_len, INIT_CHANNEL)
+        video_lens = torch.randint(NUM_INIT_CLIPS - 5, pad_len, (B,))
+        video_masks = torch.arange(pad_len)[None, :] < video_lens[:, None]
         sents_tokens = sents['input_ids']
         sents_masks = sents['attention_mask']
 
         video_feats, sents_feats, scores, mask2d = model(
-            video_feats, sents_tokens, sents_masks, num_sentences)
+            video_feats, video_masks, sents_tokens, sents_masks, num_sentences)
 
         print('-' * 80)
         print(f"video_feats   : {video_feats.shape}")

@@ -111,32 +111,6 @@ def iou2ds_to_iou2d(
     return torch.stack(iou2d, dim=0)
 
 
-def aggregate_feats(
-    feats: torch.Tensor,    # [num_src_clips, C]
-    num_tgt_clips: int,     # number of target clip
-    op_type: str = 'avg',   # 'avg' or 'max'
-) -> torch.Tensor:          # [C, num_tgt_clips]
-    """Aggregate the feature of video into fixed shape."""
-    assert op_type in ['avg', 'max']
-
-    num_src_clips, _ = feats.shape
-    idxs = torch.arange(0, num_tgt_clips + 1) / num_tgt_clips * num_src_clips
-    idxs = idxs.round().long()
-    feats = F.normalize(feats, dim=1)
-    feats_bucket = []
-    for i in range(num_tgt_clips):
-        s, e = idxs[i], idxs[i + 1]
-        # to prevent an empty selection, check the indices are valid.
-        if s < e:
-            if op_type == 'avg':
-                feats_bucket.append(feats[s:e].mean(dim=0))
-            if op_type == 'max':
-                feats_bucket.append(feats[s:e].max(dim=0)[0])
-        else:
-            feats_bucket.append(feats[s])
-    return torch.stack(feats_bucket, dim=1)
-
-
 if __name__ == '__main__':
     torch.set_printoptions(linewidth=200)
 

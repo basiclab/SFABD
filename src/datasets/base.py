@@ -2,6 +2,7 @@ import json
 from typing import List, Dict, Tuple
 
 import torch
+import torch.nn.functional as F
 from tqdm import tqdm
 from transformers import DistilBertTokenizer
 
@@ -91,8 +92,16 @@ class CollateBase(torch.utils.data.Dataset):
             padding=True,
             return_tensors="pt")
 
+        video_lens = torch.tensor([x.shape[0] for x in batch['video_feats']])
+        pad_len = video_lens.max()
+        for i, video_feats in enumerate(batch['video_feats']):
+            batch['video_feats'][i] = F.pad(
+                video_feats, [0, 0, 0, pad_len - len(video_feats)])
+        video_masks = torch.arange(pad_len)[None, :] < video_lens[:, None]
+
         return {
             'video_feats': torch.stack(batch['video_feats'], dim=0),
+            'video_masks': video_masks,
             'sents_tokens': sentences['input_ids'],
             'sents_masks': sentences['attention_mask'],
             'num_sentences': torch.stack(batch['num_sentences'], dim=0),
