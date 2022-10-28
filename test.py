@@ -37,8 +37,8 @@ from src.utils import nms, scores2ds_to_moments
 # test
 @click.option('--test_batch_size', default=64)
 @click.option('--nms_threshold', default=0.5)
-@click.option('--recall_Ns', default=[1, 5, 10], multiple=True)
-@click.option('--recall_IoUs', default=[0.5, 0.7], multiple=True)
+@click.option('--recall_Ns', 'recall_Ns', default=[1, 5], multiple=True)
+@click.option('--recall_IoUs', 'recall_IoUs', default=[0.5, 0.7], multiple=True)
 # logging
 @click.option('--logdir', default="./logs/test", type=str)
 # scripts only
@@ -64,6 +64,7 @@ def test(**kwargs):
     )
 
     model = MMN(
+        num_init_clips=config.num_init_clips,
         feat1d_in_channel=config.feat_channel,
         feat1d_out_channel=config.feat1d_out_channel,
         feat1d_pool_kerenl_size=config.feat1d_pool_kerenl_size,
