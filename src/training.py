@@ -41,9 +41,9 @@ def test_epoch(
     for batch, _ in tqdm(loader, ncols=0, leave=False, desc="Inferencing"):
         batch = {key: value.to(device) for key, value in batch.items()}
         with torch.no_grad():
-            *_, scores2ds, mask2d = model(**batch)
+            *_, scores2d, _, mask2d = model(**batch)
 
-        out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
+        out_moments, out_scores1ds = scores2ds_to_moments(scores2d, mask2d)
         pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
         pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
         pred_moments.append(pred_moments_batch)
@@ -67,6 +67,7 @@ def train_epoch(
     config: AttrDict,
 ):
     device = dist.get_device()
+    model.train()
     pbar = tqdm(        # progress bar for each epoch
         loader,         # length is determined by the number of batches
         ncols=0,        # disable bar, only show percentage
@@ -79,11 +80,11 @@ def train_epoch(
     true_moments = []
     for batch, _ in pbar:
         batch = {key: value.to(device) for key, value in batch.items()}
-        video_feats, sents_feats, scores2ds, mask2d = model(**batch)
         iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips)
         iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])
 
-        loss_iou = loss_iou_fn(scores2ds, iou2d, mask2d)
+        video_feats, sents_feats, scores2d, logits2d, mask2d = model(**batch)
+        loss_iou = loss_iou_fn(logits2d, iou2d, mask2d)
         if config.contrastive_weight != 0:
             loss_inter_video, loss_inter_query, loss_intra_video = loss_con_fn(
                 video_feats=video_feats,
@@ -108,16 +109,15 @@ def train_epoch(
             loss += loss_contrastive * config.contrastive_weight
         else:
             loss += loss_iou * config.iou_weight
-            loss += loss_contrastive * config.contrastive_weight * 0.1
+            loss += loss_contrastive * config.contrastive_weight * 0.01
 
         loss.backward()
-        if config.clip_grad_norm > 0:
-            clip_grad_norm_(model.parameters(), config.clip_grad_norm)
+        if config.grad_clip > 0:
+            clip_grad_norm_(model.parameters(), config.grad_clip)
         optimizer.step()
         optimizer.zero_grad(set_to_none=True)
 
-        out_moments, out_scores1ds = scores2ds_to_moments(
-            scores2ds.detach(), mask2d)
+        out_moments, out_scores1ds = scores2ds_to_moments(scores2d, mask2d)
         pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
         pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
         pred_moments.append(pred_moments_batch)
@@ -158,12 +158,7 @@ def training_loop(config: AttrDict):
     device = dist.get_device()
 
     # train Dataset and DataLoader
-    train_dataset = construct_class(
-        config.TrainDataset,
-        ann_file=config.train_ann_file,
-        feat_file=config.feat_file,
-        num_init_clips=config.num_init_clips,
-    )
+    train_dataset = construct_class(config.TrainDataset)
     train_sampler = DistributedSampler(train_dataset, shuffle=True, seed=config.seed)
     train_loader = DataLoader(
         dataset=train_dataset,
@@ -174,12 +169,7 @@ def training_loop(config: AttrDict):
     )
 
     # test Dataset and DataLoader
-    test_dataset = construct_class(
-        config.TestDataset,
-        ann_file=config.test_ann_file,
-        feat_file=config.feat_file,
-        num_init_clips=config.num_init_clips,
-    )
+    test_dataset = construct_class(config.TestDataset)
     test_sampler = DistributedSampler(test_dataset, shuffle=False, seed=config.seed)
     test_loader = DataLoader(
         dataset=test_dataset,
@@ -194,8 +184,8 @@ def training_loop(config: AttrDict):
     loss_con_fn = ContrastiveLoss(
         T_v=config.tau_video,
         T_q=config.tau_query,
-        neg_video_iou=config.neg_video_iou,
-        pos_video_topk=config.pos_video_topk,
+        neg_iou=config.neg_iou,
+        pos_topk=config.pos_topk,
         margin=config.margin,
         inter=config.inter,
         intra=config.intra,
@@ -204,7 +194,7 @@ def training_loop(config: AttrDict):
     # model
     model_local = MMN(
         num_init_clips=config.num_init_clips,
-        feat1d_in_channel=config.feat_channel,
+        feat1d_in_channel=train_dataset.get_feat_dim(),
         feat1d_out_channel=config.feat1d_out_channel,
         feat1d_pool_kerenl_size=config.feat1d_pool_kerenl_size,
         feat1d_pool_stride_size=config.num_init_clips // config.num_clips,
@@ -261,7 +251,6 @@ def training_loop(config: AttrDict):
     dist.barrier()
 
     for epoch in range(1, config.epochs + 1):
-        model.train()
         train_sampler.set_epoch(epoch)
 
         # freeze BERT parameters for the first few epochs
@@ -270,6 +259,7 @@ def training_loop(config: AttrDict):
                 param.requires_grad_(True)
             model = SyncBatchNorm.convert_sync_batchnorm(model_local)
             model = DistributedDataParallel(model, device_ids=[device])
+
         train_pred_moments, train_true_moments, train_losses = train_epoch(
             model, train_loader, optimizer, loss_iou_fn, loss_con_fn, epoch,
             config)
@@ -337,8 +327,14 @@ def training_loop(config: AttrDict):
                 torch.save(state, path)
             if test_recall[config.best_metric] > best_recall[config.best_metric]:
                 best_recall = test_recall
+                best_mAPs = test_mAPs
                 path = os.path.join(config.logdir, f"best.pth")
                 torch.save(state, path)
+
+            for name, value in best_recall.items():
+                test_writer.add_scalar(f'best/{name}', value, epoch)
+            for name, value in best_mAPs.items():
+                test_writer.add_scalar(f'best/{name}', value, epoch)
 
             train_writer.flush()
             test_writer.flush()

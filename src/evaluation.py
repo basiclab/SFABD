@@ -1,7 +1,9 @@
 from typing import List, Dict
 
 import torch
+from tqdm import tqdm
 
+import src.dist as dist
 from src.utils import iou
 
 
@@ -72,7 +74,8 @@ def calculate_recall(
 
     max_N = max(recall_Ns)
     ious = []
-    for data in calc_buffer:
+    for data in tqdm(calc_buffer, ncols=0, leave=False, desc="Recall",
+                     disable=not dist.is_main()):
         ious.append(calculate_recall_worker(*data, pad=max_N))
     ious = torch.cat(ious)
 
@@ -107,7 +110,8 @@ def calculate_APs_worker(
         from boost import boost_calculate_APs
         APs = boost_calculate_APs(
             out_ious, out_tgts, mAP_ious, len(tgt_moments))
-    except ImportError:
+    except Exception as e:
+        raise e
         APs = []
         for mAP_iou in mAP_ious:
             tp_cnt = []
@@ -157,7 +161,8 @@ def calculate_mAPs(
         shift_t += num_t
 
     APs = []
-    for data in calc_buffer:
+    for data in tqdm(calc_buffer, ncols=0, leave=False, desc="mAP",
+                     disable=not dist.is_main()):
         APs.append(calculate_APs_worker(*data, mAP_ious, max_proposals))
     mAPs = torch.stack(APs).mean(dim=0)
 

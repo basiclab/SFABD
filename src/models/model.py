@@ -8,6 +8,32 @@ from src.models.modules import (
     AggregateVideo, Conv1dPool, SparseMaxPool, ProposalConv, LanguageModel)
 
 
+def matching_scores(
+    video_feats: torch.Tensor,      # [B, C, N, N]
+    sents_feats: torch.Tensor,      # [S, C]
+    num_sentences: torch.Tensor,    # [B]
+    mask2d: torch.Tensor,           # [N, N]
+):
+    """
+    Return matching scores between each proposal and corresponding query.
+
+    Return:
+        scores_matrix: [B, N, N], the value range is [-1, 1]
+    """
+    device = num_sentences.device
+    scatter_s2v = torch.arange(len(num_sentences), device=device).long()
+    scatter_s2v = scatter_s2v.repeat_interleave(num_sentences)
+
+    video_feats = F.normalize(video_feats, dim=1)
+    sents_feats = F.normalize(sents_feats, dim=1)
+    scores2d = video_feats[scatter_s2v] * sents_feats[:, :, None, None]
+    scores2d = scores2d.sum(dim=1)              # [S, N, N]
+    logits2d = scores2d * 10
+    scores2d = torch.sigmoid(logits2d.detach())     # [S, N, N]
+    scores2d = scores2d * mask2d.unsqueeze(0)   # [S, N, N]
+    return scores2d, logits2d
+
+
 class MMN(nn.Module):
     def __init__(
         self,
@@ -47,31 +73,6 @@ class MMN(nn.Module):
         )
         self.sents_model = LanguageModel(joint_space_size)  # [S, C]
 
-    def matching_scores(
-        self,
-        video_feats: torch.Tensor,      # [B, C, N, N]
-        sents_feats: torch.Tensor,      # [S, C]
-        num_sentences: torch.Tensor,    # [B]
-        mask2d: torch.Tensor,           # [N, N]
-    ):
-        """
-        Return matching scores between each proposal and corresponding query.
-
-        Return:
-            scores_matrix: [B, N, N], the value range is [-1, 1]
-        """
-        device = num_sentences.device
-        scatter_s2v = torch.arange(len(num_sentences), device=device).long()
-        scatter_s2v = scatter_s2v.repeat_interleave(num_sentences)
-
-        video_feats = F.normalize(video_feats, dim=1)
-        sents_feats = F.normalize(sents_feats, dim=1)
-        scores2d = video_feats[scatter_s2v] * sents_feats[:, :, None, None]
-        scores2d = scores2d.sum(dim=1)              # [S, N, N]
-        scores2d = torch.sigmoid(scores2d * 10)     # [S, N, N]
-        scores2d = scores2d * mask2d.unsqueeze(0)   # [S, N, N]
-        return scores2d
-
     def forward(
         self,
         video_feats: torch.Tensor,          # [B, T, C]
@@ -91,16 +92,15 @@ class MMN(nn.Module):
         assert sents_tokens.shape == sents_masks.shape
         assert sents_tokens.shape[0] == num_sentences.sum()
 
-        video_feats = F.normalize(video_feats, dim=-1)              # [B, T, C]
         video_feats = self.aggregrate(video_feats, video_masks)     # [B, ?, C]
         video_feats = video_feats.permute(0, 2, 1)                  # [B, C, ?]
         video_feats, mask2d = self.video_model(video_feats)
         sents_feats = self.sents_model(sents_tokens, sents_masks)
 
-        scores2d = self.matching_scores(
+        scores2d, logits2d = matching_scores(
             video_feats, sents_feats, num_sentences, mask2d)
 
-        return video_feats, sents_feats, scores2d, mask2d
+        return video_feats, sents_feats, scores2d, logits2d, mask2d
 
 
 if __name__ == '__main__':
@@ -162,18 +162,20 @@ if __name__ == '__main__':
         sents_tokens = sents['input_ids']
         sents_masks = sents['attention_mask']
 
-        video_feats, sents_feats, scores, mask2d = model(
+        video_feats, sents_feats, scores2d, logits2d, mask2d = model(
             video_feats, video_masks, sents_tokens, sents_masks, num_sentences)
 
         print('-' * 80)
         print(f"video_feats   : {video_feats.shape}")
         print(f"sentence_feats: {sents_feats.shape}")
-        print(f"scores        : {scores.shape}")
+        print(f"scores2d      : {scores2d.shape}")
+        print(f"logits2d      : {logits2d.shape}")
         print(f"mask2d        : {mask2d.shape}")
 
         assert video_feats.shape == (B, joint_space_size, NUM_CLIPS, NUM_CLIPS)
         assert sents_feats.shape == (S, joint_space_size)
-        assert scores.shape == (sum(num_sentences).item(), NUM_CLIPS, NUM_CLIPS)
+        assert scores2d.shape == (sum(num_sentences).item(), NUM_CLIPS, NUM_CLIPS)
+        assert logits2d.shape == (sum(num_sentences).item(), NUM_CLIPS, NUM_CLIPS)
         assert mask2d.shape == (NUM_CLIPS, NUM_CLIPS)
 
     # Charades

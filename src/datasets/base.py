@@ -10,11 +10,7 @@ from src import dist
 
 
 class CollateBase(torch.utils.data.Dataset):
-    def __init__(
-        self,
-        ann_file,   # path to annotation file (.json)
-        **dummy,
-    ):
+    def __init__(self, ann_file):
         self.tokenizer = DistilBertTokenizer.from_pretrained(
             "distilbert-base-uncased")
         self.annos = self.parse_anno(ann_file)

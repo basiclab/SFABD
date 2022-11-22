@@ -1,10 +1,6 @@
 {
-    "TrainDataset": "src.datasets.charades.Charades",
-    "train_ann_file": "./data/CharadesSTA/train_multitarget.json",
-    "TestDataset": "src.datasets.charades.Charades",
-    "test_ann_file": "./data/CharadesSTA/test_multitarget.json",
-    "feat_file": "./data/CharadesSTA/vgg_rgb_features.hdf5",
-    "feat_channel": 4096,
+    "TrainDataset": "src.datasets.charades.CharadesSTATrain",
+    "TestDataset": "src.datasets.charades.CharadesSTATest",
     "num_init_clips": 32,
     "num_clips": 16,
     "feat1d_out_channel": 512,
@@ -19,8 +15,8 @@
     "iou_weight": 1.0,
     "tau_video": 0.1,
     "tau_query": 0.1,
-    "neg_video_iou": 0.5,
-    "pos_video_topk": 1,
+    "neg_iou": 0.5,
+    "pos_topk": 1,
     "margin": 0.4,
     "inter": true,
     "intra": false,
@@ -32,10 +28,10 @@
     "milestones": [8, 13],
     "bert_freeze_epoch": 4,
     "only_iou_epoch": 7,
-    "clip_grad_norm": 5.0,
+    "grad_clip": 5.0,
     "test_batch_size": 48,
     "nms_threshold": 0.5,
     "recall_Ns": [1, 5],
     "recall_IoUs": [0.5, 0.7],
-    "logdir": "./logs/charades-iou-inter"
+    "logdir": "./logs/charades-s-iou-inter"
 }

@@ -18,8 +18,7 @@ class AggregateVideo(nn.Module):
 
         src_num, _ = video_feats.shape
         idxs = torch.arange(0, self.tgt_num + 1) / self.tgt_num * src_num
-        idxs = idxs.round().long()
-        # feats = F.normalize(feats, dim=1)
+        idxs = idxs.round().long().clamp(max=src_num - 1)
         feats_bucket = []
         for i in range(self.tgt_num):
             s, e = idxs[i], idxs[i + 1]

@@ -1,6 +1,7 @@
 import importlib
 import json
 import random
+import warnings
 from typing import Dict
 
 import click
@@ -26,6 +27,9 @@ def CommandAwareConfig(config_param_name):
                 if param != config_param_name and param in configs:
                     if ctx.get_parameter_source(param) == click.core.ParameterSource.DEFAULT:
                         ctx.params[param] = configs[param]
+            unused = [k for k in configs.keys() if k not in ctx.params.keys()]
+            if len(unused) > 0:
+                warnings.warn(f'{",".join(unused)} in the config file is/are not used')
             return super(CustomCommandClass, self).invoke(ctx)
     return CustomCommandClass
 

@@ -14,8 +14,8 @@ class ScaledIoULoss(nn.Module):
 
     def forward(
         self,
-        scores2d: torch.Tensor,     # [S, N, N]
-        iou2d: torch.Tensor,       # [S, N, N]
+        logits2d: torch.Tensor,     # [S, N, N]
+        iou2d: torch.Tensor,        # [S, N, N]
         mask2d: torch.Tensor,       # [N, N]
     ):
         """
@@ -24,12 +24,12 @@ class ScaledIoULoss(nn.Module):
             S: number of (S)entences
             P: number of (P)roposals = number of 1 in mask2d
         """
-        S, _, _ = scores2d.shape
-        assert scores2d.shape == iou2d.shape, f"{scores2d.shape} != {iou2d.shape}"
-        scores1d = scores2d.masked_select(mask2d).view(S, -1)   # [S, P]
-        iou1d = iou2d.masked_select(mask2d).view(S, -1)        # [S, P]
+        S, _, _ = logits2d.shape
+        assert logits2d.shape == iou2d.shape, f"{logits2d.shape} != {iou2d.shape}"
+        logits1d = logits2d.masked_select(mask2d).view(S, -1)   # [S, P]
+        iou1d = iou2d.masked_select(mask2d).view(S, -1)         # [S, P]
         iou1d = self.linear_scale(iou1d)                        # [S, P]
-        loss = F.binary_cross_entropy(scores1d, iou1d)
+        loss = F.binary_cross_entropy_with_logits(logits1d, iou1d)
         return loss
 
 
@@ -38,17 +38,17 @@ class ContrastiveLoss(nn.Module):
         self,
         T_v: float = 0.1,
         T_q: float = 0.1,
-        neg_video_iou: float = 0.5,
-        pos_video_topk: int = 1,
+        neg_iou: float = 0.5,
+        pos_topk: int = 1,
         margin: float = 0,
         inter: bool = True,
         intra: bool = False,
     ):
         super().__init__()
-        self.T_v = T_v                          # 0.1
-        self.T_q = T_q                          # 0.1
-        self.neg_video_iou = neg_video_iou      # 0.5
-        self.pos_video_topk = pos_video_topk    # 1
+        self.T_v = T_v              # 0.1
+        self.T_q = T_q              # 0.1
+        self.neg_iou = neg_iou      # 0.5
+        self.pos_topk = pos_topk    # 1
         self.margin = margin
         self.inter = inter
         self.intra = intra
@@ -90,7 +90,7 @@ class ContrastiveLoss(nn.Module):
         S = num_sentences.sum().cpu().item()
         M = num_targets.sum().cpu().item()
         P = mask2d.long().sum()
-        K = self.pos_video_topk
+        K = self.pos_topk
 
         assert iou2d.shape == (S, N, N), f"{iou2d.shape} != {(S, N, N)}"
         assert iou2ds.shape == (M, N, N), f"{iou2ds.shape} != {(M, N, N)}"
@@ -157,7 +157,7 @@ class ContrastiveLoss(nn.Module):
             pos_mask = pos_mask.reshape(B, -1)                      # [B, B * P]
             pos_mask = pos_mask[scatter_s2v]                        # [S, B * P]
             assert pos_mask.long().sum(dim=-1).eq(P).all()
-            s2v_pos_mask = iou2d > self.neg_video_iou               # [S, P]
+            s2v_pos_mask = iou2d > self.neg_iou                     # [S, P]
             pos_mask[pos_mask.clone()] = s2v_pos_mask.view(-1)
             inter_query_neg_mask = ~pos_mask.unsqueeze(1)           # [S, 1, B * P]
 
@@ -198,7 +198,7 @@ class ContrastiveLoss(nn.Module):
                 topk_video_feats.unsqueeze(2),                      # [M, K, 1, C]
                 video_feats[scatter_m2v].unsqueeze(1),              # [M, 1, P, C]
             ).sum(dim=-1).reshape(M * K, -1)                        # [M * K, P]
-            intra_video_neg_mask = iou2d < self.neg_video_iou       # [S, P]
+            intra_video_neg_mask = iou2d < self.neg_iou             # [S, P]
 
             loss_intra_video = self.log_cross_entropy(
                 intra_video_pos,                                    # [E]

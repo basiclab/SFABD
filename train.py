@@ -13,13 +13,9 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--seed', default=25285)
 # train dataset
 @click.option('--TrainDataset', "TrainDataset", default='src.datasets.charades.Charades')
-@click.option('--train_ann_file', default="./data/CharadesSTA/charades_train.json")
 # test dataset
 @click.option('--TestDataset', "TestDataset", default='src.datasets.charades.Charades')
-@click.option('--test_ann_file', default="./data/CharadesSTA/charades_test.json")
 # dataset share
-@click.option('--feat_file', default="./data/CharadesSTA/vgg_rgb_features.hdf5")
-@click.option('--feat_channel', default=4096)
 @click.option('--num_init_clips', default=32)
 @click.option('--num_clips', default=16)
 # model
@@ -29,6 +25,7 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--conv2d_hidden_channel', default=512)
 @click.option('--conv2d_kernel_size', default=5)
 @click.option('--conv2d_num_layers', default=8)
+# joint model
 @click.option('--joint_space_size', default=256)
 # iou loss
 @click.option('--min_iou', default=0.5)
@@ -37,11 +34,12 @@ from src.misc import AttrDict, CommandAwareConfig
 # contrastive loss
 @click.option('--tau_video', default=0.1)
 @click.option('--tau_query', default=0.1)
-@click.option('--neg_video_iou', default=0.5)
-@click.option('--pos_video_topk', default=1)
+@click.option('--neg_iou', default=0.5)
+@click.option('--pos_iou', default=0.9)
+@click.option('--pos_topk', default=1)
 @click.option('--margin', default=0.4)
-@click.option('--inter', default=True)
-@click.option('--intra', default=False)
+@click.option('--inter/--no-inter', default=True)
+@click.option('--intra/--no-intra', default=False)
 @click.option('--contrastive_weight', default=0.05)
 # optimizer
 @click.option('--base_lr', default=1e-4)
@@ -51,7 +49,7 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--epochs', default=18)
 @click.option('--bert_freeze_epoch', default=4)
 @click.option('--only_iou_epoch', default=7)
-@click.option('--clip_grad_norm', default=5.0)
+@click.option('--grad_clip', default=5.0)
 # test
 @click.option('--test_batch_size', default=64)
 @click.option('--nms_threshold', default=0.5)
