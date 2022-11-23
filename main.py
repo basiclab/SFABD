@@ -5,12 +5,14 @@ import click
 import torch.multiprocessing
 
 from src.training import training_loop
+from src.testing import testing_loop
 from src.misc import AttrDict, CommandAwareConfig
 
 
 @click.command(cls=CommandAwareConfig('config'), context_settings={'show_default': True})
 @click.option('--config', default=None, type=str)
 @click.option('--seed', default=25285)
+@click.option('--test_only/--no-test_only', default=False)
 # train dataset
 @click.option('--TrainDataset', "TrainDataset", default='src.datasets.charades.Charades')
 # test dataset
@@ -25,6 +27,7 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--conv2d_hidden_channel', default=512)
 @click.option('--conv2d_kernel_size', default=5)
 @click.option('--conv2d_num_layers', default=8)
+@click.option('--dual_space/--no-dual_space', default=False)
 # joint model
 @click.option('--joint_space_size', default=256)
 # iou loss
@@ -50,7 +53,7 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--bert_freeze_epoch', default=4)
 @click.option('--only_iou_epoch', default=7)
 @click.option('--grad_clip', default=5.0)
-# test
+# testing options
 @click.option('--test_batch_size', default=64)
 @click.option('--nms_threshold', default=0.5)
 @click.option('--recall_Ns', 'recall_Ns', default=[1, 5, 10], multiple=True)
@@ -59,6 +62,9 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--logdir', default="./logs/test", type=str)
 @click.option('--best_metric', default="R@1,IoU=0.7")
 @click.option('--save_freq', default=5)
+# visualization options (test_only)
+@click.option('--draw_rec', default=5)
+@click.option('--draw_iou', default=0.7)
 def main(**kwargs):
     config = AttrDict(**kwargs)
 
@@ -87,8 +93,12 @@ def subprocess(rank, world_size, temp_dir, config):
     torch.cuda.set_device(rank)
     torch.cuda.empty_cache()
 
-    # training
-    training_loop(config)
+    if config.test_only:
+        # testing
+        testing_loop(config)
+    else:
+        # training
+        training_loop(config)
 
 
 if __name__ == "__main__":

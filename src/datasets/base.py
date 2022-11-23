@@ -36,6 +36,7 @@ class CollateBase(torch.utils.data.Dataset):
             sentences = []
             tgt_moments = []
             num_targets = []
+            qids = []
             for anno in video_data['annotations']:
                 timestamps = []
                 for timestamp in anno['timestamps']:
@@ -51,6 +52,11 @@ class CollateBase(torch.utils.data.Dataset):
                     tgt_moments.append(torch.stack(timestamps, dim=0))
                     num_targets.append(torch.tensor(len(timestamps)))
 
+                    if 'qid' in anno:
+                        qids.append(anno['qid'])
+                    else:
+                        qids.append(0)
+
             if len(sentences) != 0:
                 annos.append({
                     'vid': vid,
@@ -59,6 +65,7 @@ class CollateBase(torch.utils.data.Dataset):
                     'num_targets': torch.stack(num_targets, dim=0),
                     'tgt_moments': torch.cat(tgt_moments, dim=0),
                     'duration': duration,
+                    'qids': torch.tensor(qids),
                 })
         pbar.close()
 
@@ -104,8 +111,9 @@ class CollateBase(torch.utils.data.Dataset):
             'num_targets': torch.cat(batch['num_targets'], dim=0),
             'tgt_moments': torch.cat(batch['tgt_moments'], dim=0),
         }, {
-            'vid': batch['vid'],
+            'qids': batch['qids'],
             'sentences': batch['sentences'],
+            'vid': batch['vid'],
             'duration': batch['duration'],
         }
 

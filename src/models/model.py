@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import List, Tuple
 
 import torch
 import torch.nn as nn
@@ -8,14 +8,13 @@ from src.models.modules import (
     AggregateVideo, Conv1dPool, SparseMaxPool, ProposalConv, LanguageModel)
 
 
-def matching_scores(
+def compute_scores(
     video_feats: torch.Tensor,      # [B, C, N, N]
     sents_feats: torch.Tensor,      # [S, C]
     num_sentences: torch.Tensor,    # [B]
-    mask2d: torch.Tensor,           # [N, N]
-):
+) -> torch.Tensor:                  # [S, N, N]
     """
-    Return matching scores between each proposal and corresponding query.
+    Return cosine similarity between each proposal and corresponding query.
 
     Return:
         scores_matrix: [B, N, N], the value range is [-1, 1]
@@ -27,11 +26,47 @@ def matching_scores(
     video_feats = F.normalize(video_feats, dim=1)
     sents_feats = F.normalize(sents_feats, dim=1)
     scores2d = video_feats[scatter_s2v] * sents_feats[:, :, None, None]
-    scores2d = scores2d.sum(dim=1)              # [S, N, N]
-    logits2d = scores2d * 10
-    scores2d = torch.sigmoid(logits2d.detach())     # [S, N, N]
-    scores2d = scores2d * mask2d.unsqueeze(0)   # [S, N, N]
+    scores2d = scores2d.sum(dim=1)
+    return scores2d
+
+
+def iou_scores(
+    video_feats: torch.Tensor,              # [B, C, N, N]
+    sents_feats: torch.Tensor,              # [S, C]
+    num_sentences: torch.Tensor,            # [B]
+    mask2d: torch.Tensor,                   # [N, N]
+    scale: float = 10,
+) -> Tuple[torch.Tensor, torch.Tensor]:     # [S, N, N]
+    """
+    Return matching scores between each proposal and corresponding query.
+
+    Return:
+        scores2d: the value range is [0, 1]
+        logits2d: the value range is [-scale, +scale]
+    """
+    scores2d = compute_scores(video_feats, sents_feats, num_sentences)
+    logits2d = scores2d * scale
+    scores2d = torch.sigmoid(logits2d.detach())
+    scores2d = scores2d * mask2d.unsqueeze(0)
     return scores2d, logits2d
+
+
+def con_scores(
+    video_feats: torch.Tensor,      # [B, C, N, N]
+    sents_feats: torch.Tensor,      # [S, C]
+    num_sentences: torch.Tensor,    # [B]
+    mask2d: torch.Tensor,           # [N, N]
+) -> torch.Tensor:                  # [S, N, N]
+    """
+    Return matching scores between each proposal and corresponding query.
+
+    Return:
+        scores_matrix: [B, N, N], the value range is [0, 1]
+    """
+    scores2d = compute_scores(video_feats, sents_feats, num_sentences)
+    scores2d = (scores2d + 1) / 2
+    scores2d = scores2d * mask2d.unsqueeze(0)
+    return scores2d
 
 
 class MMN(nn.Module):
@@ -47,6 +82,7 @@ class MMN(nn.Module):
         conv2d_kernel_size: int = 5,            # ProposalConv
         conv2d_num_layers: int = 8,             # ProposalConv
         joint_space_size: int = 256,
+        dual_space: bool = False,               # whether to use dual feature space
     ):
         """
             B: (B)atch size
@@ -54,6 +90,7 @@ class MMN(nn.Module):
             N: (N)um clips
         """
         super(MMN, self).__init__()
+        self.dual_space = dual_space
         self.aggregrate = AggregateVideo(num_init_clips)
         self.video_model = nn.Sequential(
             Conv1dPool(                                     # [B, C, NUM_INIT_CLIPS]
@@ -69,9 +106,11 @@ class MMN(nn.Module):
                 joint_space_size,
                 conv2d_kernel_size,
                 conv2d_num_layers,
+                dual_space,
             )                                               # [B, C, N, N]
         )
-        self.sents_model = LanguageModel(joint_space_size)  # [S, C]
+        self.sents_model = LanguageModel(
+            joint_space_size, dual_space)                   # [S, C]
 
     def forward(
         self,
@@ -94,13 +133,26 @@ class MMN(nn.Module):
 
         video_feats = self.aggregrate(video_feats, video_masks)     # [B, ?, C]
         video_feats = video_feats.permute(0, 2, 1)                  # [B, C, ?]
-        video_feats, mask2d = self.video_model(video_feats)
-        sents_feats = self.sents_model(sents_tokens, sents_masks)
+        video_feats1, video_feats2, mask2d = self.video_model(video_feats)
+        sents_feats1, sents_feats2 = self.sents_model(sents_tokens, sents_masks)
 
-        scores2d, logits2d = matching_scores(
-            video_feats, sents_feats, num_sentences, mask2d)
+        if self.dual_space:
+            iou_scores2d, logits2d = iou_scores(
+                video_feats1, sents_feats1, num_sentences, mask2d)
+            con_scores2d = con_scores(
+                video_feats2, sents_feats2, num_sentences, mask2d)
+            scores2d = torch.sqrt(con_scores2d) * iou_scores2d
+        else:
+            scores2d, logits2d = iou_scores(
+                video_feats1, sents_feats1, num_sentences, mask2d)
 
-        return video_feats, sents_feats, scores2d, logits2d, mask2d
+        return (
+            video_feats2,       # [B, C, N, N]  for contrastive learning
+            sents_feats2,       # [S, C]        for contrastive learning
+            logits2d,           # [S, N, N]     for iou loss
+            scores2d.detach(),  # [S, N, N]     for evaluation
+            mask2d.detach(),    # [N, N]
+        )
 
 
 if __name__ == '__main__':

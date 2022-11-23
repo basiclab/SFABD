@@ -93,14 +93,16 @@ class SparseMaxPool(nn.Module):
 class ProposalConv(nn.Module):
     def __init__(
         self,
-        in_channel: int,        # input feature size
-        hidden_channel: int,    # hidden feature size
-        out_channel: int,       # output feature size
-        kernel_size: int,       # kernel size
-        num_layers: int,        # number of CNN layers (exclude the last projection layer)
+        in_channel: int,            # input feature size
+        hidden_channel: int,        # hidden feature size
+        out_channel: int,           # output feature size
+        kernel_size: int,           # kernel size
+        num_layers: int,            # number of CNN layers (exclude the projection layers)
+        dual_scpae: bool = False    # whether to use dual feature scpace
     ):
         super(ProposalConv, self).__init__()
         self.kernel_size = kernel_size
+        self.dual_scpae = dual_scpae
 
         self.blocks = nn.ModuleList()
         self.paddings = []
@@ -119,7 +121,11 @@ class ProposalConv(nn.Module):
             ))
             self.paddings.append(padding)
 
-        self.proj = nn.Conv2d(hidden_channel, out_channel, 1)
+        if dual_scpae:
+            self.proj1 = nn.Conv2d(hidden_channel, out_channel, 1)
+            self.proj2 = nn.Conv2d(hidden_channel, out_channel, 1)
+        else:
+            self.proj = nn.Conv2d(hidden_channel, out_channel, 1)
 
     def get_masked_weight(self, mask, padding):
         masked_weight = torch.round(F.conv2d(
@@ -136,29 +142,52 @@ class ProposalConv(nn.Module):
         for padding, block in zip(self.paddings, self.blocks):
             mask, masked_weight = self.get_masked_weight(mask, padding)
             x = block(x) * masked_weight
-        x = self.proj(x)
-        return x, mask2d
+        if self.dual_scpae:
+            x1 = self.proj1(x)
+            x2 = self.proj2(x)
+        else:
+            x1 = self.proj(x)
+            x2 = x1
+        return x1, x2, mask2d
 
 
 class LanguageModel(nn.Module):
-    def __init__(self, joint_space_size):
+    def __init__(self, joint_space_size, dual_scpae=False):
         super().__init__()
+        self.dual_scpae = dual_scpae
+
         logging.set_verbosity_error()
         self.bert = DistilBertModel.from_pretrained('distilbert-base-uncased')
         logging.set_verbosity_warning()
-        self.proj = nn.Sequential(
-            nn.LayerNorm(768),
-            nn.Linear(768, joint_space_size),
-        )
+
+        if dual_scpae:
+            self.proj1 = nn.Sequential(
+                nn.LayerNorm(768),
+                nn.Linear(768, joint_space_size),
+            )
+            self.proj2 = nn.Sequential(
+                nn.LayerNorm(768),
+                nn.Linear(768, joint_space_size),
+            )
+        else:
+            self.proj = nn.Sequential(
+                nn.LayerNorm(768),
+                nn.Linear(768, joint_space_size),
+            )
 
     def forward(
         self,
-        sents_tokens: torch.Tensor,     # [S, L]
-        sents_masks: torch.Tensor,      # [S, L]
-    ):                                  # [S, L]
+        sents_tokens: torch.Tensor,                                         # [S, L]
+        sents_masks: torch.Tensor,                                          # [S, L]
+    ):
         feats = self.bert(sents_tokens, attention_mask=sents_masks)[0]      # [S, L, C]
         feats = (feats * sents_masks.unsqueeze(-1)).sum(dim=1)              # [S, C]
         feats = feats / sents_masks.sum(dim=1, keepdim=True)                # [S, C]
 
-        feats = self.proj(feats)                                            # [S, C]
-        return feats
+        if self.dual_scpae:
+            feats1 = self.proj1(feats)                                      # [S, C]
+            feats2 = self.proj2(feats)                                      # [S, C]
+        else:
+            feats1 = self.proj(feats)                                       # [S, C]
+            feats2 = feats1                                                 # [S, C]
+        return feats1, feats2

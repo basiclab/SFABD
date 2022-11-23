@@ -47,6 +47,6 @@ class QVHighlightsVal(QVHighlights):
         super().__init__(ann_file="./data/QVHighlights/val.json")
 
 
-# class QVHighlightsTest(QVHighlights):
-#     def __init__():
-#         super().__init__(ann_file="./data/QVHighlights/test.json")
+class QVHighlightsTest(QVHighlights):
+    def __init__(self):
+        super().__init__(ann_file="./data/QVHighlights/test.json")

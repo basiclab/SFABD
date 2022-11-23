@@ -1,71 +1,40 @@
 import os
+import json
 
-import click
 import matplotlib.pyplot as plt
 import seaborn as sns
 import torch
 import torch.multiprocessing
-from torch.utils.data import DataLoader
+from torch.nn import SyncBatchNorm
+from torch.nn.parallel import DistributedDataParallel
+from torch.utils.data import DataLoader, DistributedSampler
 from tqdm import tqdm
 
 import src.dist as dist
 from src.evaluation import calculate_recall, calculate_mAPs, recall_name
-from src.misc import AttrDict, CommandAwareConfig, print_table, construct_class
+from src.misc import print_table, construct_class
 from src.models.model import MMN
 from src.utils import nms, scores2ds_to_moments
 
 
-@click.command(cls=CommandAwareConfig('config'), context_settings={'show_default': True})
-@click.option('--config', default=None, type=str)
-@click.option('--seed', default=25285)
-# test dataset
-@click.option('--TestDataset', "TestDataset", default='src.datasets.charades.Charades')
-@click.option('--test_ann_file', default="./data/CharadesSTA/charades_test.json")
-# dataset share
-@click.option('--feat_file', default="./data/CharadesSTA/vgg_rgb_features.hdf5")
-@click.option('--feat_channel', default=4096)
-@click.option('--num_init_clips', default=32)
-@click.option('--num_clips', default=16)
-# model
-@click.option('--feat1d_out_channel', default=512)
-@click.option('--feat1d_pool_kerenl_size', default=2)
-@click.option('--feat2d_pool_counts', default=[16], multiple=True)
-@click.option('--conv2d_hidden_channel', default=512)
-@click.option('--conv2d_kernel_size', default=5)
-@click.option('--conv2d_num_layers', default=8)
-@click.option('--joint_space_size', default=256)
-# test
-@click.option('--test_batch_size', default=64)
-@click.option('--nms_threshold', default=0.5)
-@click.option('--recall_Ns', 'recall_Ns', default=[1, 5], multiple=True)
-@click.option('--recall_IoUs', 'recall_IoUs', default=[0.5, 0.7], multiple=True)
-# logging
-@click.option('--logdir', default="./logs/test", type=str)
-# scripts only
-@click.option('--draw_rec', default=5)
-@click.option('--draw_iou', default=0.7)
-def test(**kwargs):
-    torch.multiprocessing.set_sharing_strategy('file_system')
-    config = AttrDict(**kwargs)
-    device = torch.device('cuda:0')
+def testing_loop(config):
+    device = dist.get_device()
 
-    dataset = construct_class(
-        config.TestDataset,
-        ann_file=config.test_ann_file,
-        feat_file=config.feat_file,
-        num_init_clips=config.num_init_clips,
-    )
-    loader = DataLoader(
-        dataset=dataset,
+    # test Dataset and DataLoader
+    test_dataset = construct_class(config.TestDataset)
+    test_sampler = DistributedSampler(test_dataset, shuffle=False, seed=config.seed)
+    test_loader = DataLoader(
+        dataset=test_dataset,
         batch_size=config.test_batch_size // dist.get_world_size(),
-        shuffle=False,
-        collate_fn=dataset.collate_fn,
+        collate_fn=test_dataset.collate_fn,
+        sampler=test_sampler,
         num_workers=min(torch.get_num_threads(), 8),
     )
 
-    model = MMN(
+    # model
+    model_local = MMN(
         num_init_clips=config.num_init_clips,
-        feat1d_in_channel=config.feat_channel,
+        feat1d_in_channel=test_dataset.get_feat_dim(),
         feat1d_out_channel=config.feat1d_out_channel,
         feat1d_pool_kerenl_size=config.feat1d_pool_kerenl_size,
         feat1d_pool_stride_size=config.num_init_clips // config.num_clips,
@@ -74,35 +43,66 @@ def test(**kwargs):
         conv2d_kernel_size=config.conv2d_kernel_size,
         conv2d_num_layers=config.conv2d_num_layers,
         joint_space_size=config.joint_space_size,
+        dual_space=config.dual_space,
     ).to(device)
+    # load from checkpoint
     ckpt = torch.load(os.path.join(config.logdir, 'best.pth'))
-    model.load_state_dict(ckpt['model'])
+    model_local.load_state_dict(ckpt['model'])
+    # DDP
+    model = SyncBatchNorm.convert_sync_batchnorm(model_local)
+    model = DistributedDataParallel(
+        model, device_ids=[device], find_unused_parameters=True)
 
-    vis_path = os.path.join(
-        config.logdir,
-        'vis',
-        recall_name(config.draw_rec, config.draw_iou))
-    os.makedirs(vis_path, exist_ok=True)
+    # vis_path = os.path.join(
+    #     config.logdir,
+    #     'vis',
+    #     recall_name(config.draw_rec, config.draw_iou))
+    # os.makedirs(vis_path, exist_ok=True)
 
     model.eval()
+    pred_submission = []
     pred_moments = []
     true_moments = []
-    for batch, info in tqdm(loader, ncols=0, leave=False, desc="Inferencing"):
+    pbar = tqdm(test_loader, ncols=0, leave=False, desc="Inferencing")
+    for batch, batch_info in pbar:
         batch = {key: value.to(device) for key, value in batch.items()}
         with torch.no_grad():
-            *_, scores2ds, mask2d = model(**batch)
+            *_, scores2d, mask2d = model(**batch)
 
-        out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
+        out_moments, out_scores1ds = scores2ds_to_moments(scores2d, mask2d)
         pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
-        pred_moments_batch = {k: v.cpu() for k, v in pred_moments_batch.items()}
+        pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
         pred_moments.append(pred_moments_batch)
 
-        batch = {key: value.cpu() for key, value in batch.items()}
         true_moments_batch = {
             'tgt_moments': batch['tgt_moments'],
             'num_targets': batch['num_targets'],
         }
+        true_moments_batch = dist.gather_dict(true_moments_batch, to_cpu=True)
         true_moments.append(true_moments_batch)
+
+        assert len(batch_info['qids']) == len(batch_info['sentences']) == len(batch_info['vid']) == len(batch_info['duration'])
+        shift = 0
+        num_proposals = iter(pred_moments_batch['num_proposals'])
+        for qids, sentences, vid, duration, in zip(
+            batch_info['qids'],
+            batch_info['sentences'],
+            batch_info['vid'],
+            batch_info['duration']
+        ):
+            assert len(qids) == len(sentences)
+            for qid, query in zip(qids, sentences):
+                num_proposal = next(num_proposals)
+                out_scores1d = pred_moments_batch['out_scores1ds'][shift: shift + num_proposal]
+                out_moments = pred_moments_batch['out_moments'][shift: shift + num_proposal] * duration
+                pred_relevant_windows = torch.cat([out_moments, out_scores1d.unsqueeze(-1)], dim=-1)
+                pred_submission.append(json.dumps({
+                    'qid': qid.item(),
+                    'query': query,
+                    'vid': vid,
+                    'pred_relevant_windows': pred_relevant_windows.tolist(),
+                }))
+                shift += num_proposal
 
         # ploting batch
         # iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips).cpu()
@@ -119,11 +119,15 @@ def test(**kwargs):
         #         plot_moments_on_iou2d(
         #             iou2d, scores2d, moment, nms_moments, path, mask2d)
 
+    with open(os.path.join(config.logdir, 'submission.jsonl'), 'w') as f:
+        for line in pred_submission:
+            f.write(line + '\n')
+
     recall = calculate_recall(
         pred_moments, true_moments, config.recall_Ns, config.recall_IoUs)
-    print_table(epoch=0, rows={'test': recall})
-
     mAPs = calculate_mAPs(pred_moments, true_moments)
+
+    print_table(epoch=0, rows={'test': recall})
     print_table(epoch=0, rows={'test': mAPs})
 
 
@@ -172,19 +176,3 @@ def plot_moments_on_iou2d(iou2d, scores2d, moment, nms_moments, path, mask2d):
     fig.tight_layout()
     fig.savefig(path, bbox_inches='tight')
     plt.close(fig)
-
-
-if __name__ == "__main__":
-    test()
-
-
-# +----------+-------------+-------------+-------------+-------------+
-# | Epoch  0 | R@1,IoU=0.5 | R@1,IoU=0.7 | R@5,IoU=0.5 | R@5,IoU=0.7 |
-# +----------+-------------+-------------+-------------+-------------+
-# |   test   |    46.263   |    27.392   |    81.640   |    57.876   |
-# +----------+-------------+-------------+-------------+-------------+
-# +----------+---------+----------+----------+
-# | Epoch  0 | avg_mAP | mAP@0.50 | mAP@0.75 |
-# +----------+---------+----------+----------+
-# |   test   |  34.439 |  61.021  |  32.890  |
-# +----------+---------+----------+----------+

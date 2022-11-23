@@ -5,9 +5,9 @@ from collections import defaultdict
 import torch
 from tensorboardX import SummaryWriter
 from torch import optim
+from torch.nn import SyncBatchNorm
 from torch.nn.utils import clip_grad_norm_
 from torch.nn.parallel import DistributedDataParallel
-from torch.nn import SyncBatchNorm
 from torch.utils.data import DataLoader, DistributedSampler
 from tqdm import tqdm
 
@@ -41,7 +41,7 @@ def test_epoch(
     for batch, _ in tqdm(loader, ncols=0, leave=False, desc="Inferencing"):
         batch = {key: value.to(device) for key, value in batch.items()}
         with torch.no_grad():
-            *_, scores2d, _, mask2d = model(**batch)
+            *_, scores2d, mask2d = model(**batch)
 
         out_moments, out_scores1ds = scores2ds_to_moments(scores2d, mask2d)
         pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
@@ -83,7 +83,7 @@ def train_epoch(
         iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips)
         iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])
 
-        video_feats, sents_feats, scores2d, logits2d, mask2d = model(**batch)
+        video_feats, sents_feats, logits2d, scores2d, mask2d = model(**batch)
         loss_iou = loss_iou_fn(logits2d, iou2d, mask2d)
         if config.contrastive_weight != 0:
             loss_inter_video, loss_inter_query, loss_intra_video = loss_con_fn(
@@ -203,6 +203,7 @@ def training_loop(config: AttrDict):
         conv2d_kernel_size=config.conv2d_kernel_size,
         conv2d_num_layers=config.conv2d_num_layers,
         joint_space_size=config.joint_space_size,
+        dual_space=config.dual_space,
     ).to(device)
     model = SyncBatchNorm.convert_sync_batchnorm(model_local)
     model = DistributedDataParallel(
