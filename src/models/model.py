@@ -99,8 +99,8 @@ class MMN(nn.Module):
                 feat1d_pool_kerenl_size,
                 feat1d_pool_stride_size,
             ),                                              # [B, C, N]
-            #SparseMaxPool(feat2d_pool_counts),              # [B, C, N, N]
-            SparsePropConv(feat2d_pool_counts, feat1d_out_channel), # [B, C, N, N]
+            SparseMaxPool(feat2d_pool_counts),              # [B, C, N, N]
+            #SparsePropConv(feat2d_pool_counts, feat1d_out_channel), # [B, C, N, N]
             #SparseConvShareWeight(feat2d_pool_counts, feat1d_out_channel, 64),
             ProposalConv(
                 feat1d_out_channel,

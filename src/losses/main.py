@@ -212,6 +212,171 @@ class ContrastiveLoss(nn.Module):
         return loss_inter_video, loss_inter_query, loss_intra_video
 
 
+class ProbEmbedContrastiveLoss(nn.Module):
+    def __init__(
+        self,
+        T_v: float = 0.1,
+        T_q: float = 0.1,
+        neg_iou: float = 0.5,
+        pos_topk: int = 1,
+        margin: float = 0,
+        inter: bool = True,
+    ):
+        super().__init__()
+        self.T_v = T_v              # 0.1
+        self.T_q = T_q              # 0.1
+        self.neg_iou = neg_iou      # 0.5
+        self.pos_topk = pos_topk    # 1
+        self.margin = margin
+        self.inter = inter
+
+    def log_cross_entropy(
+        self,
+        pos_score: torch.Tensor,                # [...]
+        all_score: torch.Tensor,                # [..., Number_of_samples]
+        neg_mask: torch.Tensor,                 # [..., Number_of_samples] 1 -> neg, 0 -> pos
+        t: float,
+        m: float = 0,
+    ):
+        pos_exp = (pos_score - m).div(t).exp()                          # [...]
+        neg_exp_sum = all_score.div(t).exp().mul(neg_mask).sum(dim=-1)  # [...]
+        all_exp_sum = pos_exp + neg_exp_sum                             # [...]
+        loss = -((pos_score - m).div(t) - torch.log(all_exp_sum))
+        return loss.mean()
+
+    def forward(
+        self,
+        video_feats: torch.Tensor,                  # [B, C, N, N]
+        video_log_sigma_feats: torch.Tensor,        # [B, C, N, N]
+        sents_feats: torch.Tensor,                  # [S, C]
+        sents_log_sigma_feats: torch.Tensor,        # [S, C]
+        num_sentences: torch.Tensor,                # [B]        number of sentences for each video
+        num_targets: torch.Tensor,                  # [S]        number of targets for each sentence
+        iou2d: torch.Tensor,                        # [S, N, N]
+        iou2ds: torch.Tensor,                       # [M, N, N]
+        mask2d: torch.Tensor,                       # [N, N]
+    ):
+        """
+            B: (B)atch size
+            C: (C)hannel
+            N: (N)um clips
+            S: number of (S)entences
+            M: number of (M)oments
+            P: number of (P)roposals = the number 1 in mask2d
+        """
+        device = video_feats.device
+        B, C, N, _ = video_feats.shape
+        S = num_sentences.sum().cpu().item()
+        M = num_targets.sum().cpu().item()
+        P = mask2d.long().sum()
+        K = self.pos_topk
+
+        assert iou2d.shape == (S, N, N), f"{iou2d.shape} != {(S, N, N)}"
+        assert iou2ds.shape == (M, N, N), f"{iou2ds.shape} != {(M, N, N)}"
+
+        # sentence idx -> video idx
+        scatter_s2v = torch.arange(B, device=device).long()
+        scatter_s2v = scatter_s2v.repeat_interleave(num_sentences)      # [S]
+        # moment idx -> sentence idx
+        scatter_m2s = torch.arange(S, device=device).long()
+        scatter_m2s = scatter_m2s.repeat_interleave(num_targets)        # [M]
+        # moment idx -> video idx
+        scatter_m2v = scatter_s2v[scatter_m2s]
+
+        video_feats = video_feats.masked_select(mask2d).view(B, C, -1)  # [B, C, P]
+        video_feats = video_feats.permute(0, 2, 1)                      # [B, P, C]
+        iou2d = iou2d.masked_select(mask2d).view(S, -1)                 # [S, P]
+        iou2ds = iou2ds.masked_select(mask2d).view(M, -1)               # [M, P]
+
+        # normalize for cosine similarity
+        video_feats = F.normalize(video_feats.contiguous(), dim=-1)     # [B, P, C]
+        sents_feats = F.normalize(sents_feats.contiguous(), dim=-1)     # [S, C]
+
+
+        if self.inter:
+            # === inter video
+            topk_idxs = iou2ds.topk(K, dim=1)[1]                    # [M, K]
+            topk_idxs = topk_idxs.unsqueeze(-1).expand(-1, -1, C)   # [M, K, C]
+            allm_video_feats = video_feats[scatter_m2v]             # [M, P, C]
+            topk_video_feats = allm_video_feats.gather(
+                dim=1, index=topk_idxs)                             # [M, K, C]
+
+            ## pos pairs cosine similarity
+            inter_video_pos = torch.mul(
+                topk_video_feats,                                   # [M, K, C]
+                sents_feats[scatter_m2s].unsqueeze(1)               # [M, 1, C]
+            ).sum(dim=-1)                                           # [M, K]
+            ## neg pairs cosine similarity
+            inter_video_all = torch.matmul(
+                topk_video_feats,                                   # [M, K, C]
+                sents_feats.t(),                                    # [C, S]
+            )                                                       # [M, K, S]
+
+            ## different similarity function
+
+
+            mask = ~torch.eye(S, device=device).bool()              # [S, S]
+            inter_video_neg_mask = mask[scatter_m2s].unsqueeze(1)   # [M, 1, S]
+
+            loss_inter_video = self.log_cross_entropy(
+                inter_video_pos,                                    # [M, K]
+                inter_video_all,                                    # [M, K, S]
+                inter_video_neg_mask,                               # [M, 1, S]
+                self.T_v,
+                self.margin,
+            )
+        else:
+            loss_inter_video = torch.tensor(0., device=device)
+
+        if self.inter:
+            # === inter query
+            inter_query_pos = inter_video_pos                       # [M, K]
+            ## neg pairs cosine similarity
+            inter_query_all = torch.mm(
+                sents_feats,                                        # [S, C]
+                video_feats.view(-1, C).t(),                        # [C, B * P]
+            ).unsqueeze(1)                                          # [S, 1, B * P]
+
+            ## different similarity function
+
+
+            pos_mask = torch.eye(B, device=device).bool()           # [B, B]
+            pos_mask = pos_mask.unsqueeze(-1)                       # [B, B, 1]
+            pos_mask = pos_mask.expand(-1, -1, P)                   # [B, B, P]
+            pos_mask = pos_mask.reshape(B, -1)                      # [B, B * P]
+            pos_mask = pos_mask[scatter_s2v]                        # [S, B * P]
+            assert pos_mask.long().sum(dim=-1).eq(P).all()
+            s2v_pos_mask = iou2d > self.neg_iou                     # [S, P]
+            pos_mask[pos_mask.clone()] = s2v_pos_mask.view(-1)
+            inter_query_neg_mask = ~pos_mask.unsqueeze(1)           # [S, 1, B * P]
+
+            loss_inter_query = self.log_cross_entropy(
+                inter_query_pos,                                    # [M, K]
+                inter_query_all[scatter_m2s],                       # [M, 1, B * P]
+                inter_query_neg_mask[scatter_m2s],                  # [M, 1, B * P]
+                self.T_q,
+                self.margin,
+            )
+        else:
+            loss_inter_query = torch.tensor(0., device=device)
+
+        
+        return loss_inter_video, loss_inter_query
+
+
+class KLRegularization(nn.Module):
+    def __init__(
+        self,
+
+    ):
+        super.__init__()
+    
+    def forward(
+        self, 
+    ):
+        pass
+
+
 if __name__ == '__main__':
     B = 4
     C = 256
