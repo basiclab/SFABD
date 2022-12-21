@@ -53,6 +53,7 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--bert_freeze_epoch', default=4)
 @click.option('--only_iou_epoch', default=7)
 @click.option('--grad_clip', default=5.0)
+@click.option('--step_gamma', default=0.1)
 # testing options
 @click.option('--test_batch_size', default=64)
 @click.option('--nms_threshold', default=0.5)
@@ -60,7 +61,7 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--recall_IoUs', 'recall_IoUs', default=[0.5, 0.7], multiple=True)
 # logging
 @click.option('--logdir', default="./logs/test", type=str)
-@click.option('--best_metric', default="R@1,IoU=0.7")
+@click.option('--best_metric', default="avg_mAP")
 @click.option('--save_freq', default=5)
 # visualization options (test_only)
 @click.option('--draw_rec', default=5)

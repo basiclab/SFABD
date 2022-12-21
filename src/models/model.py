@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from src.models.modules import (
-    AggregateVideo, Conv1dPool, SparseMaxPool, ProposalConv, LanguageModel)
+    AggregateVideo, Conv1dPool, SparseMaxPool, SparsePropConv, SparseConvShareWeight, ProposalConv, LanguageModel)
 
 
 def compute_scores(
@@ -99,7 +99,9 @@ class MMN(nn.Module):
                 feat1d_pool_kerenl_size,
                 feat1d_pool_stride_size,
             ),                                              # [B, C, N]
-            SparseMaxPool(feat2d_pool_counts),              # [B, C, N, N]
+            #SparseMaxPool(feat2d_pool_counts),              # [B, C, N, N]
+            SparsePropConv(feat2d_pool_counts, feat1d_out_channel), # [B, C, N, N]
+            #SparseConvShareWeight(feat2d_pool_counts, feat1d_out_channel, 64),
             ProposalConv(
                 feat1d_out_channel,
                 conv2d_hidden_channel,
@@ -109,8 +111,7 @@ class MMN(nn.Module):
                 dual_space,
             )                                               # [B, C, N, N]
         )
-        self.sents_model = LanguageModel(
-            joint_space_size, dual_space)                   # [S, C]
+        self.sents_model = LanguageModel(joint_space_size, dual_space)                   # [S, C]
 
     def forward(
         self,

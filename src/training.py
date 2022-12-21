@@ -224,7 +224,7 @@ def training_loop(config: AttrDict):
         {'params': bert_params, 'lr': config.bert_lr}
     ], betas=(0.9, 0.99), weight_decay=1e-5)
     # scheduler
-    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, config.milestones, 0.1)
+    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, config.milestones, config.step_gamma)
 
     # evaluate test set before training to get initial recall
     test_pred_moments, test_true_moments = test_epoch(model, test_loader, config)
@@ -326,7 +326,9 @@ def training_loop(config: AttrDict):
             if epoch % config.save_freq == 0:
                 path = os.path.join(config.logdir, f"ckpt_{epoch}.pth")
                 torch.save(state, path)
-            if test_recall[config.best_metric] > best_recall[config.best_metric]:
+            
+            #if test_recall[config.best_metric] > best_recall[config.best_metric]: 
+            if test_mAPs[config.best_metric] > best_mAPs[config.best_metric]:
                 best_recall = test_recall
                 best_mAPs = test_mAPs
                 path = os.path.join(config.logdir, f"best.pth")
