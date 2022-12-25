@@ -96,15 +96,40 @@ class SparsePropConv(nn.Module):
         self.num_scale_layers = counts
         self.hidden_size = hidden_size
         self.convs = nn.ModuleList()
+        for layer_idx, layer_count in enumerate(self.num_scale_layers):
+            if layer_idx == 0:
+                self.convs.extend([
+                    nn.Sequential(
+                        nn.Conv1d(hidden_size, hidden_size, 1, 1),
+                        nn.BatchNorm1d(hidden_size),
+                        nn.ReLU(),
+                    )
+                ])
+                self.convs.extend([nn.Sequential(
+                    nn.Conv1d(hidden_size, hidden_size, 2, 1),
+                    nn.BatchNorm1d(hidden_size),
+                    nn.ReLU(),
+                ) for _ in range(layer_count-1)])         
+
+            else:
+                self.convs.extend([nn.MaxPool1d(3, 2)]) 
+                self.convs.extend([nn.Sequential(
+                    nn.Conv1d(hidden_size, hidden_size, 2, 1),
+                    nn.BatchNorm1d(hidden_size),
+                    nn.ReLU(),
+                ) for _ in range(layer_count-1)])            
+
+        '''
         self.convs.extend(
                 [nn.Conv1d(hidden_size, hidden_size, 1, 1)] + [nn.Conv1d(hidden_size, hidden_size, 2, 1) for _ in range(self.num_scale_layers[0]-1)]
+                #[nn.Conv1d(hidden_size, hidden_size, 2, 1) for _ in range(self.num_scale_layers[0]-1)]
             )  
         for count in self.num_scale_layers[1:]: ## start from 2nd layer
             self.convs.extend(
                 #[nn.Conv1d(hidden_size, hidden_size, 3, 2)] + [nn.Conv1d(hidden_size, hidden_size, 2, 1) for _ in range(count-1)]
                 [nn.MaxPool1d(3, 2)] + [nn.Conv1d(hidden_size, hidden_size, 2, 1) for _ in range(count-1)]
             )        
-    
+        '''
     def forward(self, x):
         B, C, N = x.shape
         mask2d = torch.eye(N, N, device=x.device).bool()
@@ -117,7 +142,6 @@ class SparsePropConv(nn.Module):
         for level, count in enumerate(self.num_scale_layers): ## (0, 16),  (1, 8), (1, 8)
             for order in range(count):
                 x = self.convs[accumulate_count](x)
-                x = F.relu(x)
 
                 i = range(0, N - offset, stride)
                 j = range(offset, N, stride)
@@ -130,7 +154,6 @@ class SparsePropConv(nn.Module):
             stride *= 2
 
         return x2d, mask2d
-
 
 
 class SparseConvShareWeight(nn.Module):
