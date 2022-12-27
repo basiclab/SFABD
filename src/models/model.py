@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from src.models.modules import (
-    AggregateVideo, Conv1dPool, SparseMaxPool, SparsePropConv, SparseConvShareWeight, ProposalConv, LanguageModel)
+    AggregateVideo, Conv1dPool, SparseMaxPool, SparsePropConv, ProposalConv, LanguageModel)
 
 
 def compute_scores(
@@ -69,6 +69,25 @@ def con_scores(
     return scores2d
 
 
+def initialize_weights(model):
+    for m in model.modules():
+        if isinstance(m, nn.Conv1d):
+            #torch.nn.init.xavier_normal_(m.weight.data)
+            #torch.nn.init.xavier_uniform_(m.weight.data)
+            #torch.nn.init.kaiming_normal_(m.weight.data)
+            torch.nn.init.kaiming_uniform_(m.weight.data)
+        elif isinstance(m, nn.Conv2d):
+            #torch.nn.init.xavier_normal_(m.weight.data)
+            #torch.nn.init.xavier_uniform_(m.weight.data)
+            #torch.nn.init.kaiming_normal_(m.weight.data)
+            torch.nn.init.kaiming_uniform_(m.weight.data)
+        elif isinstance(m, nn.Linear):
+            #torch.nn.init.xavier_normal_(m.weight.data)
+            #torch.nn.init.xavier_uniform_(m.weight.data)
+            #torch.nn.init.kaiming_normal_(m.weight.data)
+            torch.nn.init.kaiming_uniform_(m.weight.data)
+     
+
 class MMN(nn.Module):
     def __init__(
         self,
@@ -111,6 +130,9 @@ class MMN(nn.Module):
             )                                               # [B, C, N, N]
         )
         self.sents_model = LanguageModel(joint_space_size, dual_space)                   # [S, C]
+
+        ## initialize weight
+        initialize_weights(self)
 
     def forward(
         self,
@@ -243,7 +265,7 @@ if __name__ == '__main__':
         conv2d_num_layers=8,
         joint_space_size=256,
     )
-
+'''
     # ActivityNet
     test(
         INIT_CHANNEL=500,
@@ -271,3 +293,4 @@ if __name__ == '__main__':
         conv2d_num_layers=8,
         joint_space_size=256,
     )
+'''

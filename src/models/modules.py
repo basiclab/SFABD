@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import DistilBertModel
 from transformers import logging
-
+   
 
 class AggregateVideo(nn.Module):
     def __init__(self, tgt_num: int):
@@ -46,6 +46,7 @@ class Conv1dPool(nn.Module):
         super().__init__()
         self.model = nn.Sequential(
             nn.Conv1d(in_channel, out_channel, 1, 1),
+            #nn.BatchNorm1d(out_channel),
             nn.ReLU(inplace=True),
             nn.AvgPool1d(pool_kernel_size, pool_stride_size),
         )
@@ -95,7 +96,7 @@ class SparsePropConv(nn.Module):
         super().__init__()
         self.num_scale_layers = counts
         self.hidden_size = hidden_size
-
+        '''
         ## for LayerNorm 
         stride, offset = 1, 0
         N = 64
@@ -160,6 +161,7 @@ class SparsePropConv(nn.Module):
                             )
                         ])
         '''
+      
         ## BatchNorm version
         self.convs = nn.ModuleList()
         for layer_idx, layer_count in enumerate(self.num_scale_layers):
@@ -172,7 +174,7 @@ class SparsePropConv(nn.Module):
                         nn.ReLU(),
                     )
                 ])
-
+                '''
                 for count in range(1, layer_count):
                     if (count % 2) != 0: ## 1, 3, 5 ...
                         self.convs.extend([nn.MaxPool1d(2, 1)])
@@ -184,22 +186,23 @@ class SparsePropConv(nn.Module):
                                 nn.ReLU(),
                             )
                         ])
-                
-                #self.convs.extend([nn.Sequential(
-                #    nn.Conv1d(hidden_size, hidden_size, 2, 1),
-                #    nn.BatchNorm1d(hidden_size),
-                #    nn.ReLU(),
-                #) for _ in range(layer_count-1)])  
+                '''
+                self.convs.extend([nn.Sequential(
+                    nn.Conv1d(hidden_size, hidden_size, 2, 1),
+                    nn.BatchNorm1d(hidden_size),
+                    nn.ReLU(),
+                ) for _ in range(layer_count-1)])  
 
             ## other layers 
             else: 
-                #self.convs.extend([nn.MaxPool1d(3, 2)])
-                #self.convs.extend([nn.Sequential(
-                #    nn.Conv1d(hidden_size, hidden_size, 2, 1),
-                #    nn.BatchNorm1d(hidden_size),
-                #    nn.ReLU(),
-                #) for _ in range(layer_count-1)])            
+                self.convs.extend([nn.MaxPool1d(3, 2)])
+                self.convs.extend([nn.Sequential(
+                    nn.Conv1d(hidden_size, hidden_size, 2, 1),
+                    nn.BatchNorm1d(hidden_size),
+                    nn.ReLU(),
+                ) for _ in range(layer_count-1)])            
 
+                '''
                 self.convs.extend([
                     nn.Sequential(
                         nn.Conv1d(hidden_size, hidden_size, 3, 2),
@@ -219,8 +222,7 @@ class SparsePropConv(nn.Module):
                                 nn.ReLU(),
                             )
                         ])
-        '''
-               
+               '''
       
     def forward(self, x):
         B, C, N = x.shape
@@ -247,59 +249,6 @@ class SparsePropConv(nn.Module):
 
         return x2d, mask2d
 
-
-class SparseConvShareWeight(nn.Module):
-    def __init__(self, counts, hidden_size, num_clips):
-        super().__init__()
-        self.counts = counts ## list
-        self.conv1 = nn.Conv1d(hidden_size, hidden_size, 1, 1)
-        self.convs = nn.ModuleList()
-        self.convs.extend([nn.Conv1d(hidden_size, hidden_size, 2, 1), 
-                           nn.Conv1d(hidden_size, hidden_size, 2, 1),
-                           nn.Conv1d(hidden_size, hidden_size, 2, 1)])
-        #self.boundary_convs = nn.ModuleList()
-        #self.boundary_convs.extend([nn.Conv1d(hidden_size, hidden_size, 3, 2),
-        #                            nn.Conv1d(hidden_size, hidden_size, 3, 2)])
-
-        #self.duration_encoding = nn.Embedding(num_clips, hidden_size) ## for encoding proposal length 
-
-
-    def forward(self, x):
-        B, C, N = x.shape
-        mask2d = torch.eye(N, N, device=x.device).bool()
-        x2d = x.new_zeros(B, C, N, N)
-
-        ## offset: for which diagonal line on 2D map
-        ## stride: interval of proposals to put on 2D map    
-        stride, offset = 1, 0  
-        for level, count in enumerate(self.counts): ## (0, 16),  (1, 8), (1, 8)
-            for order in range(count):
-                i = range(0, N - offset, stride)
-                j = range(offset, N, stride)
-
-                proposal_duration = torch.tensor([j[0] - i[0]]) ## the duration before conv
-                proposal_duration = proposal_duration.to(x.device)
-
-                ## first
-                if (level == 0 and order == 0):
-                  x = self.conv1(x)
-                ## not first
-                else:
-                    if order == 0:
-                        x = torch.nn.functional.max_pool1d(x, 3, 2)
-                        #x = self.boundary_convs[level-1](x)
-                    else:
-                        x = self.convs[level](x)
-                        #x = self.convs[level](x + self.duration_encoding(proposal_duration).t())
-
-                x2d[:, :, i, j] = x 
-                mask2d[i, j] = 1
-                offset += stride ## offset for diagonal line
-
-            offset += stride
-            stride *= 2
-
-        return x2d, mask2d
 
 
 class ProposalConv(nn.Module):
