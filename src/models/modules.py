@@ -96,77 +96,12 @@ class SparsePropConv(nn.Module):
         super().__init__()
         self.num_scale_layers = counts
         self.hidden_size = hidden_size
-        '''
-        ## for LayerNorm 
-        stride, offset = 1, 0
-        N = 64
-        layerNorm_len_list = []
-        for level, count in enumerate(self.num_scale_layers): ## (0, 16),  (1, 8), (1, 8)
-            for order in range(count):
-                i = range(0, N - offset, stride)
-                j = range(offset, N, stride)
-                layerNorm_len_list.append(len(i))
-                offset += stride ## offset for diagonal line
-            offset += stride
-            stride *= 2
 
-        ## LayerNorm version
-        counter = 0
         self.convs = nn.ModuleList()
         for layer_idx, layer_count in enumerate(self.num_scale_layers):
             ## first layer
             if layer_idx == 0:
-                self.convs.extend([
-                    nn.Sequential(
-                        nn.Conv1d(hidden_size, hidden_size, 1, 1),
-                        nn.LayerNorm([self.hidden_size, layerNorm_len_list.pop(0)]), ## [C, N]
-                        nn.ReLU(),
-                    )
-                ])
-
-                for count in range(1, layer_count):
-                    if (count % 2) != 0: ## 1, 3, 5 ...
-                        self.convs.extend([nn.MaxPool1d(2, 1)])
-                        layerNorm_len_list.pop(0)
-                    else: ## 2, 4, 6 ...
-                        self.convs.extend([
-                            nn.Sequential(
-                                nn.Conv1d(hidden_size, hidden_size, 2, 1),
-                                nn.LayerNorm([self.hidden_size, layerNorm_len_list.pop(0)]), ## [C, N]
-                                nn.ReLU(),
-                            )
-                        ])
-
-            ## other layers 
-            else: 
-                self.convs.extend([
-                    nn.Sequential(
-                        nn.Conv1d(hidden_size, hidden_size, 3, 2),
-                        nn.LayerNorm([self.hidden_size, layerNorm_len_list.pop(0)]), ## [C, N]
-                        nn.ReLU(),
-                    )
-                ])
-
-                for count in range(1, layer_count):
-                    if (count % 2) != 0: ## 1, 3, 5 ...
-                        self.convs.extend([nn.MaxPool1d(2, 1)])
-                        layerNorm_len_list.pop(0)
-
-                    else: ## 2, 4, 6 ...
-                        self.convs.extend([
-                            nn.Sequential(
-                                nn.Conv1d(hidden_size, hidden_size, 2, 1),
-                                nn.LayerNorm([self.hidden_size, layerNorm_len_list.pop(0)]), ## [C, N]
-                                nn.ReLU(),
-                            )
-                        ])
-        '''
-      
-        ## BatchNorm version
-        self.convs = nn.ModuleList()
-        for layer_idx, layer_count in enumerate(self.num_scale_layers):
-            ## first layer
-            if layer_idx == 0:
+                '''
                 self.convs.extend([
                     nn.Sequential(
                         nn.Conv1d(hidden_size, hidden_size, 1, 1),
@@ -174,7 +109,7 @@ class SparsePropConv(nn.Module):
                         nn.ReLU(),
                     )
                 ])
-                '''
+                
                 for count in range(1, layer_count):
                     if (count % 2) != 0: ## 1, 3, 5 ...
                         self.convs.extend([nn.MaxPool1d(2, 1)])
@@ -187,19 +122,30 @@ class SparsePropConv(nn.Module):
                             )
                         ])
                 '''
+                
+                ## maxpool except first input
+                for i in range(1, layer_count):
+                    self.convs.extend([
+                        nn.MaxPool1d(2, 1),
+                    ])
+
+
+                '''
                 self.convs.extend([nn.Sequential(
                     nn.Conv1d(hidden_size, hidden_size, 2, 1),
                     nn.BatchNorm1d(hidden_size),
                     nn.ReLU(),
                 ) for _ in range(layer_count-1)])  
-
+                '''
             ## other layers 
             else: 
                 self.convs.extend([nn.MaxPool1d(3, 2)])
                 self.convs.extend([nn.Sequential(
                     nn.Conv1d(hidden_size, hidden_size, 2, 1),
-                    nn.BatchNorm1d(hidden_size),
+                    #nn.BatchNorm1d(hidden_size),
+                    #nn.ReLU(),
                     nn.ReLU(),
+                    nn.BatchNorm1d(hidden_size),
                 ) for _ in range(layer_count-1)])            
 
                 '''
@@ -235,7 +181,9 @@ class SparsePropConv(nn.Module):
         stride, offset = 1, 0
         for level, count in enumerate(self.num_scale_layers): ## (0, 16),  (1, 8), (1, 8)
             for order in range(count):
-                x = self.convs[accumulate_count](x)
+                #x = self.convs[accumulate_count](x)
+                if accumulate_count != 0:
+                    x = self.convs[accumulate_count-1](x)
 
                 i = range(0, N - offset, stride)
                 j = range(offset, N, stride)
@@ -277,8 +225,10 @@ class ProposalConv(nn.Module):
             self.blocks.append(nn.Sequential(
                 nn.Conv2d(
                     channel, hidden_channel, kernel_size, padding=padding),
-                nn.BatchNorm2d(hidden_channel),
+                #nn.BatchNorm2d(hidden_channel),
+                #nn.ReLU(inplace=True),
                 nn.ReLU(inplace=True),
+                nn.BatchNorm2d(hidden_channel),
             ))
             self.paddings.append(padding)
 
