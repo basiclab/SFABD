@@ -44,6 +44,7 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--inter/--no-inter', default=True)
 @click.option('--intra/--no-intra', default=False)
 @click.option('--contrastive_weight', default=0.05)
+@click.option('--cont_weight_step', default=0.01)
 # optimizer
 @click.option('--base_lr', default=1e-4)
 @click.option('--bert_lr', default=1e-5)

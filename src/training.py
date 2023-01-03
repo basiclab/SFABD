@@ -109,7 +109,7 @@ def train_epoch(
             loss += loss_contrastive * config.contrastive_weight
         else:
             loss += loss_iou * config.iou_weight
-            loss += loss_contrastive * config.contrastive_weight * 0.01
+            loss += loss_contrastive * config.contrastive_weight * config.cont_weight_step ## scale down cont loss
 
         loss.backward()
         if config.grad_clip > 0:
