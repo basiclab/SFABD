@@ -95,8 +95,14 @@ def train_epoch(
                 iou2ds=iou2ds,
                 mask2d=mask2d,
             )
-            loss_contrastive = (
-                loss_inter_video + loss_inter_query + loss_intra_video)
+            
+            if epoch < config.intra_start_epoch:
+                loss_contrastive = (loss_inter_video + loss_inter_query + loss_intra_video*0)    
+            else:
+                loss_contrastive = (loss_inter_video + loss_inter_query + loss_intra_video)
+            
+            #loss_contrastive = (loss_inter_video + loss_inter_query + loss_intra_video)
+
         else:
             loss_inter_video = torch.zeros((), device=device)
             loss_inter_query = torch.zeros((), device=device)
