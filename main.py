@@ -30,6 +30,9 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--dual_space/--no-dual_space', default=False)
 # joint model
 @click.option('--joint_space_size', default=256)
+# Probabilistic Embedding
+@click.option('--num_samples', default=7)
+
 # iou loss
 @click.option('--min_iou', default=0.5)
 @click.option('--max_iou', default=1.0)
@@ -43,6 +46,7 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--margin', default=0.4)
 @click.option('--inter/--no-inter', default=True)
 @click.option('--intra/--no-intra', default=False)
+@click.option('--intra_start_epoch', default=6)
 @click.option('--contrastive_weight', default=0.05)
 @click.option('--cont_weight_step', default=0.01)
 # optimizer

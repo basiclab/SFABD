@@ -6,8 +6,11 @@ import torch.nn.functional as F
 
 from src.models.modules import (
     AggregateVideo, Conv1dPool, SparseMaxPool, SparsePropConv, ProposalConv, LanguageModel)
+## for probabilistic embedding
+from src.models.modules import ProposalConv_PE, LanguageModel_PE
+from src.utils import sample_gaussian_tensors
 
-
+## cos sim between 2D proposal map and query
 def compute_scores(
     video_feats: torch.Tensor,      # [B, C, N, N]
     sents_feats: torch.Tensor,      # [S, C]
@@ -25,11 +28,56 @@ def compute_scores(
 
     video_feats = F.normalize(video_feats, dim=1)
     sents_feats = F.normalize(sents_feats, dim=1)
+    ## cosine sim
     scores2d = video_feats[scatter_s2v] * sents_feats[:, :, None, None]
-    scores2d = scores2d.sum(dim=1)
+    scores2d = scores2d.sum(dim=1)   # [B, N, N]
+    return scores2d
+
+## cos sim between 2D proposal map and query
+def compute_scores_PE(
+    video_feats_mean: torch.Tensor,             # [B, C, N, N]
+    video_feats_log_sigma: torch.Tensor,        # [B, C, N, N]
+    sents_feats_mean: torch.Tensor,             # [S, C]
+    sents_feats_log_sigma: torch.Tensor,        # [S, C]
+    num_sentences: torch.Tensor,                # [B]
+    num_samples: int
+) -> torch.Tensor:                              # [S, N, N]
+    """
+    Return cosine similarity between each proposal and corresponding query.
+
+    Return:
+        scores_matrix: [B, N, N], the value range is [-1, 1]
+    """
+    B, C, N, _ = video_feats_mean.shape
+    device = num_sentences.device
+    scatter_s2v = torch.arange(len(num_sentences), device=device).long()
+    scatter_s2v = scatter_s2v.repeat_interleave(num_sentences)
+
+    video_feats_mean = F.normalize(video_feats_mean, dim=1)
+    sents_feats_mean = F.normalize(sents_feats_mean, dim=1)
+    
+    ## last dim must be C
+    video_feats_mean = video_feats_mean.permute(0, 2, 3, 1)             ## [B, N, N, C]
+    video_feats_log_sigma = video_feats_log_sigma.permute(0, 2, 3, 1)   ## [B, N, N, C]
+    ## sampling
+    sampled_video_feats = sample_gaussian_tensors(video_feats_mean[scatter_s2v], 
+                                video_feats_log_sigma[scatter_s2v], num_samples)  # [S, N, N, num_samples, C]
+    sampled_sents_feats = sample_gaussian_tensors(sents_feats_mean, sents_feats_log_sigma, num_samples)  # [S, num_samples, C]
+
+    ## cos sim for num_samples * num_samples pairs
+    sampled_video_feats = sampled_video_feats.repeat(1, 1, 1, num_samples, 1)   # [S, N, N, num_samples^2, C]
+    sampled_sents_feats = torch.repeat_interleave(sampled_sents_feats, num_samples, dim=-2)  # [S, num_samples^2, C]
+    score2d = torch.mul(
+        sampled_video_feats,                        # [S, N, N, num_samples^2, C]
+        sampled_sents_feats[:, None, None, :, :],   # [S, 1, 1, num_samples^2, C]
+    ).sum(dim=-1)                                   # [S, N, N, num_samples^2]
+    score2d = torch.mean(score2d, dim=-1)           # [S, N, N]
+
+    
     return scores2d
 
 
+## main embedding space
 def iou_scores(
     video_feats: torch.Tensor,              # [B, C, N, N]
     sents_feats: torch.Tensor,              # [S, C]
@@ -44,13 +92,14 @@ def iou_scores(
         scores2d: the value range is [0, 1]
         logits2d: the value range is [-scale, +scale]
     """
-    scores2d = compute_scores(video_feats, sents_feats, num_sentences)
-    logits2d = scores2d * scale
-    scores2d = torch.sigmoid(logits2d.detach())
+    scores2d = compute_scores(video_feats, sents_feats, num_sentences)  ## [-1, 1]
+    logits2d = scores2d * scale                                         ## [-scale, scale]
+    scores2d = torch.sigmoid(logits2d.detach())                         ## [0, 1]
     scores2d = scores2d * mask2d.unsqueeze(0)
-    return scores2d, logits2d
+    #return scores2d, logits2d
+    return scores2d, logits2d.sigmoid() 
 
-
+## for 2nd embedding space
 def con_scores(
     video_feats: torch.Tensor,      # [B, C, N, N]
     sents_feats: torch.Tensor,      # [S, C]
@@ -118,8 +167,8 @@ class MMN(nn.Module):
                 feat1d_pool_kerenl_size,
                 feat1d_pool_stride_size,
             ),                                              # [B, C, N]
-            #SparseMaxPool(feat2d_pool_counts),              # [B, C, N, N]
-            SparsePropConv(feat2d_pool_counts, feat1d_out_channel), # [B, C, N, N]
+            SparseMaxPool(feat2d_pool_counts),              # [B, C, N, N]
+            #SparsePropConv(feat2d_pool_counts, feat1d_out_channel), # [B, C, N, N]
             ProposalConv(
                 feat1d_out_channel,
                 conv2d_hidden_channel,
@@ -164,6 +213,7 @@ class MMN(nn.Module):
             con_scores2d = con_scores(
                 video_feats2, sents_feats2, num_sentences, mask2d)
             scores2d = torch.sqrt(con_scores2d) * iou_scores2d
+        ## common embedding space
         else:
             scores2d, logits2d = iou_scores(
                 video_feats1, sents_feats1, num_sentences, mask2d)
@@ -171,10 +221,97 @@ class MMN(nn.Module):
         return (
             video_feats2,       # [B, C, N, N]  for contrastive learning
             sents_feats2,       # [S, C]        for contrastive learning
+            logits2d,           # [S, N, N]     for iou loss (sim score * scale=10)
+            scores2d.detach(),  # [S, N, N]     for evaluation
+            mask2d.detach(),    # [N, N]
+        )
+
+
+class MMN_PE(nn.Module):
+    def __init__(
+        self,
+        num_init_clips: int,
+        feat1d_in_channel: int,                 # Conv1dPool
+        feat1d_out_channel: int = 512,          # Conv1dPool
+        feat1d_pool_kerenl_size: int = 2,       # Conv1dPool
+        feat1d_pool_stride_size: int = 2,       # Conv1dPool
+        feat2d_pool_counts: List[int] = [16],   # SparseMaxPool
+        conv2d_hidden_channel: int = 512,       # ProposalConv
+        conv2d_kernel_size: int = 5,            # ProposalConv
+        conv2d_num_layers: int = 8,             # ProposalConv
+        joint_space_size: int = 256,
+    ):
+        """
+            B: (B)atch size
+            C: (C)hannel = JOINT_SPACE_SIZE
+            N: (N)um clips
+        """
+        super(MMN, self).__init__()
+        self.aggregrate = AggregateVideo(num_init_clips)
+        self.video_model = nn.Sequential(
+            Conv1dPool(                                     # [B, C, NUM_INIT_CLIPS]
+                feat1d_in_channel,
+                feat1d_out_channel,
+                feat1d_pool_kerenl_size,
+                feat1d_pool_stride_size,
+            ),                                              # [B, C, N]
+            SparseMaxPool(feat2d_pool_counts),              # [B, C, N, N]
+            #SparsePropConv(feat2d_pool_counts, feat1d_out_channel), # [B, C, N, N]
+            ProposalConv_PE(
+                feat1d_out_channel,
+                conv2d_hidden_channel,
+                joint_space_size,
+                conv2d_kernel_size,
+                conv2d_num_layers,
+            )                                               # [B, C, N, N]
+        )
+        self.sents_model = LanguageModel_PE(joint_space_size)        # [S, C]
+
+        ## initialize weight
+        #initialize_weights(self)
+
+    def forward(
+        self,
+        video_feats: torch.Tensor,          # [B, T, C]
+        video_masks: torch.Tensor,          # [B, T]
+        sents_tokens: torch.Tensor,         # [S, L]
+        sents_masks: torch.Tensor,          # [S, L]
+        num_sentences: torch.Tensor,        # [B]
+        **kwargs,                           # dummy
+    ):
+        """
+            B: (B)atch size
+            C: (C)hannel = JOINT_SPACE_SIZE
+            N: (N)um clips
+            S: number of (S)entences
+            L: (L)ength of tokens
+        """
+        assert sents_tokens.shape == sents_masks.shape
+        assert sents_tokens.shape[0] == num_sentences.sum()
+
+        video_feats = self.aggregrate(video_feats, video_masks)     # [B, ?, C]
+        video_feats = video_feats.permute(0, 2, 1)                  # [B, C, ?]
+
+        # x_mean, x_log_sigma, mask2d
+        video_feats_mean, video_feats_log_sigma, mask2d = self.video_model(video_feats)
+        # mean_feats, log_sigma_feats
+        sents_feats_mean, sents_feats_log_sigma = self.sents_model(sents_tokens, sents_masks)
+
+        scores2d, logits2d = iou_scores(video_feats_mean, sents_feats_mean, num_sentences, mask2d)
+        ## new sim score for probabilistic embedding
+
+
+        return (
+            video_feats_mean,       # [B, C, N, N]  for contrastive learning
+            video_feats_log_sigma,  # [B, C, N, N]  for contrastive learning
+            sents_feats_mean,       # [S, C]        for contrastive learning
+            sents_feats_log_sigma,  # [S, C]        for contrastive learning
             logits2d,           # [S, N, N]     for iou loss
             scores2d.detach(),  # [S, N, N]     for evaluation
             mask2d.detach(),    # [N, N]
         )
+
+
 
 
 if __name__ == '__main__':

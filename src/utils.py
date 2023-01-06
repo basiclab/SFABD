@@ -111,6 +111,22 @@ def iou2ds_to_iou2d(
     return torch.stack(iou2d, dim=0)
 
 
+def l2_normalize(tensor, axis=-1):
+    """L2-normalize columns of tensor"""
+    return F.normalize(tensor, p=2, dim=axis)
+
+
+## last dim must be hidden_size C
+def sample_gaussian_tensors(mu, logsigma, num_samples):
+    shape_list = [1 for i in range(len(mu.shape)+1)]
+    shape_list[len(shape_list)-2] = num_samples
+    new_shape = torch.zeros_like(mu).unsqueeze(-2).repeat(shape_list).shape ## [.., num_samples, C]
+    sampled_normal_vector = torch.randn(new_shape, dtype=mu.dtype, device=mu.device)
+    samples = sampled_normal_vector.mul(torch.exp(logsigma.unsqueeze(-2))).add_(mu.unsqueeze(-2))
+    
+    return samples
+
+
 if __name__ == '__main__':
     torch.set_printoptions(linewidth=200)
 

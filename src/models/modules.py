@@ -46,7 +46,6 @@ class Conv1dPool(nn.Module):
         super().__init__()
         self.model = nn.Sequential(
             nn.Conv1d(in_channel, out_channel, 1, 1),
-            #nn.BatchNorm1d(out_channel),
             nn.ReLU(inplace=True),
             nn.AvgPool1d(pool_kernel_size, pool_stride_size),
         )
@@ -129,7 +128,6 @@ class SparsePropConv(nn.Module):
                         nn.MaxPool1d(2, 1),
                     ])
 
-
                 '''
                 self.convs.extend([nn.Sequential(
                     nn.Conv1d(hidden_size, hidden_size, 2, 1),
@@ -137,15 +135,17 @@ class SparsePropConv(nn.Module):
                     nn.ReLU(),
                 ) for _ in range(layer_count-1)])  
                 '''
+
             ## other layers 
             else: 
                 self.convs.extend([nn.MaxPool1d(3, 2)])
                 self.convs.extend([nn.Sequential(
                     nn.Conv1d(hidden_size, hidden_size, 2, 1),
-                    #nn.BatchNorm1d(hidden_size),
-                    #nn.ReLU(),
-                    nn.ReLU(),
                     nn.BatchNorm1d(hidden_size),
+                    nn.ReLU(),
+                    ## reverse BN, ReLU order
+                    #nn.ReLU(),
+                    #nn.BatchNorm1d(hidden_size),
                 ) for _ in range(layer_count-1)])            
 
                 '''
@@ -184,7 +184,7 @@ class SparsePropConv(nn.Module):
                 #x = self.convs[accumulate_count](x)
                 if accumulate_count != 0:
                     x = self.convs[accumulate_count-1](x)
-
+               
                 i = range(0, N - offset, stride)
                 j = range(offset, N, stride)
                 x2d[:, :, i, j] = x
@@ -225,10 +225,11 @@ class ProposalConv(nn.Module):
             self.blocks.append(nn.Sequential(
                 nn.Conv2d(
                     channel, hidden_channel, kernel_size, padding=padding),
-                #nn.BatchNorm2d(hidden_channel),
-                #nn.ReLU(inplace=True),
-                nn.ReLU(inplace=True),
                 nn.BatchNorm2d(hidden_channel),
+                nn.ReLU(inplace=True),
+                ## reverse BN, ReLU order
+                #nn.ReLU(inplace=True),
+                #nn.BatchNorm2d(hidden_channel),
             ))
             self.paddings.append(padding)
 
