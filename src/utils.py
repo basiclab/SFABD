@@ -117,14 +117,17 @@ def l2_normalize(tensor, axis=-1):
 
 
 ## last dim must be hidden_size C
-def sample_gaussian_tensors(mu, logsigma, num_samples):
-    shape_list = [1 for i in range(len(mu.shape)+1)]
-    shape_list[len(shape_list)-2] = num_samples
-    new_shape = torch.zeros_like(mu).unsqueeze(-2).repeat(shape_list).shape ## [.., num_samples, C]
-    sampled_normal_vector = torch.randn(new_shape, dtype=mu.dtype, device=mu.device)
-    samples = sampled_normal_vector.mul(torch.exp(logsigma.unsqueeze(-2))).add_(mu.unsqueeze(-2))
-    
-    return samples
+def sample_gaussian_tensors(
+    mu: torch.Tensor,       # [..., C] 
+    logsigma: torch.Tensor, # [..., C]
+    num_samples: int=7,     
+) -> torch.Tensor:          # [..., num_samples, C]
+    repeat_shape_list = [1 for i in range(len(mu.shape)+1)]     # [1, 1, ... 1, 1]
+    repeat_shape_list[len(repeat_shape_list)-2] = num_samples   # [1, 1, ... num_samples, 1]  
+    new_shape = torch.zeros_like(mu).unsqueeze(-2).repeat(repeat_shape_list).shape      ## [.., num_samples, C]
+    sampled_normal_vector = torch.randn(new_shape, dtype=mu.dtype, device=mu.device)    ## [.., num_samples, C]
+    sampled_feats = sampled_normal_vector.mul(torch.exp(logsigma.unsqueeze(-2))).add_(mu.unsqueeze(-2))
+    return sampled_feats  ## not normalized
 
 
 if __name__ == '__main__':

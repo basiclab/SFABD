@@ -222,6 +222,7 @@ class ProbEmbedContrastiveLoss(nn.Module):
         pos_topk: int = 1,
         margin: float = 0,
         inter: bool = True,
+        kl: bool = True,
         num_samples: int = 7,
     ):
         super().__init__()
@@ -231,15 +232,18 @@ class ProbEmbedContrastiveLoss(nn.Module):
         self.pos_topk = pos_topk    # 1
         self.margin = margin
         self.inter = inter
+        self.kl = kl
         self.num_samples = num_samples
 
     def kl_divergence_constraint(
         self,
-        mu: torch.Tensor, 
-        log_sigma: torch.Tensor,
+        mu: torch.Tensor,           # [..., C]
+        log_sigma: torch.Tensor,    # [..., C]
     ):
-        ## KL divergence with N(0, 1)
-        return -0.5 * (1 + log_sigma - mu.pow(2) - log_sigma.exp()).sum()
+        ## KL divergence with N(0, 1)  -0.5 * [1 + log_variance - variance - mu^2]
+        return -0.5 * (1 + 2*log_sigma - mu.pow(2) - (2*log_sigma).exp()).sum() / mu.nelement()
+        ## don't constraint mu
+        #return -0.5 * (1 + 2*log_sigma - (2*log_sigma).exp()).sum() / mu.nelement()
 
 
     def log_cross_entropy(
@@ -300,7 +304,6 @@ class ProbEmbedContrastiveLoss(nn.Module):
         video_feats_log_sigma = video_feats_log_sigma.masked_select(mask2d).view(B, C, -1)  # [B, C, P]
         video_feats_log_sigma = video_feats_log_sigma.permute(0, 2, 1)    # [B, P, C]
 
-
         iou2d = iou2d.masked_select(mask2d).view(S, -1)                 # [S, P]
         iou2ds = iou2ds.masked_select(mask2d).view(M, -1)               # [M, P]
 
@@ -308,6 +311,16 @@ class ProbEmbedContrastiveLoss(nn.Module):
         video_feats_mean = F.normalize(video_feats_mean.contiguous(), dim=-1)     # [B, P, C]
         sents_feats_mean = F.normalize(sents_feats_mean.contiguous(), dim=-1)     # [S, C]
 
+        if self.kl:
+            loss_kl_constraint = self.kl_divergence_constraint(
+                                        video_feats_mean,               # [B, P, C]
+                                        video_feats_log_sigma,          # [B, P, C]
+                                ) + self.kl_divergence_constraint(
+                                        sents_feats_mean,               # [S, C]
+                                        sents_feats_log_sigma,          # [S, C]
+                                )
+        else:
+            loss_kl_constraint = torch.tensor(0., device=device)
 
         if self.inter:
             # === inter video
@@ -320,7 +333,7 @@ class ProbEmbedContrastiveLoss(nn.Module):
                 dim=1, index=topk_idxs)                                       # [M, K, C]
 
             ## logSigma
-            allm_video_feats_log_sigma = video_feats_log_sigma[scatter_m2v]             # [M, P, C]
+            allm_video_feats_log_sigma = video_feats_log_sigma[scatter_m2v]   # [M, P, C]
             topk_video_feats_log_sigma = allm_video_feats_log_sigma.gather(
                 dim=1, index=topk_idxs)                                       # [M, K, C]
 
@@ -331,16 +344,30 @@ class ProbEmbedContrastiveLoss(nn.Module):
             #).sum(dim=-1)                                                # [M, K]
             
             ## Probabilistic embedding approach
-            sampled_topk_video_feats = sample_gaussian_tensors(topk_video_feats_mean, 
-                                            topk_video_feats_log_sigma, self.num_samples)    # [M, K, num_samples, C]
-            sampled_m2s_sents_feats = sample_gaussian_tensors(sents_feats_mean[scatter_m2s].unsqueeze(1), 
-                                            sents_feats_log_sigma[scatter_m2s].unsqueeze(1), self.num_samples)  # [M, 1, num_samples, C]
+            sampled_topk_video_feats = sample_gaussian_tensors(
+                                            topk_video_feats_mean,         # [M, K, C]
+                                            topk_video_feats_log_sigma,    # [M, K, C]
+                                            self.num_samples
+                                        )    # [M, K, num_samples, C]
+            sampled_topk_video_feats = F.normalize(sampled_topk_video_feats.contiguous(), dim=-1)
+
+            sampled_m2s_sents_feats = sample_gaussian_tensors(
+                                            sents_feats_mean[scatter_m2s].unsqueeze(1),      # [M, 1, C]
+                                            sents_feats_log_sigma[scatter_m2s].unsqueeze(1), # [M, 1, C]
+                                            self.num_samples
+                                        )    # [M, 1, num_samples, C]
+            sampled_m2s_sents_feats = F.normalize(sampled_m2s_sents_feats.contiguous(), dim=-1)
+
             # compute inter_video_pos [M, K]
-            sampled_topk_video_feats = sampled_topk_video_feats.repeat(1, 1, self.num_samples, 1) # [M, K, num_sample^2, C]
-            sampled_m2s_sents_feats = torch.repeat_interleave(sampled_m2s_sents_feats, self.num_samples, dim=-2) # [M, K, num_samples^2, C]
+            sampled_topk_video_feats = sampled_topk_video_feats.repeat(1, 1, self.num_samples, 1) # [M, K, num_samples^2, C]
+            sampled_m2s_sents_feats = torch.repeat_interleave(
+                                        sampled_m2s_sents_feats, 
+                                        self.num_samples, 
+                                        dim=-2
+                                        ) # [M, K, num_samples^2, C]
             inter_video_pos = torch.mul(
-                sampled_topk_video_feats,
-                sampled_m2s_sents_feats,
+                sampled_topk_video_feats,   # [M, K, num_samples^2, C]
+                sampled_m2s_sents_feats,    # [M, K, num_samples^2, C]
             ).sum(dim=-1)                   # [M, K, num_samples^2]
             inter_video_pos = torch.mean(inter_video_pos, dim=-1)  # [M, K]
 
@@ -352,13 +379,28 @@ class ProbEmbedContrastiveLoss(nn.Module):
             #)                                                            # [M, K, S]
 
             ## neg
-            sampled_topk_video_feats = sample_gaussian_tensors(topk_video_feats_mean, 
-                                            topk_video_feats_log_sigma, self.num_samples)    # [M, K, num_samples, C]
-            sampled_sents_feats = sample_gaussian_tensors(sents_feats_mean, sents_feats_log_sigma, self.num_samples) # [S, num_samples, C]
-            
+            sampled_topk_video_feats = sample_gaussian_tensors(
+                                            topk_video_feats_mean, 
+                                            topk_video_feats_log_sigma, 
+                                            self.num_samples
+                                        )    # [M, K, num_samples, C]
+            sampled_topk_video_feats = F.normalize(sampled_topk_video_feats.contiguous(), dim=-1)
+
+            sampled_sents_feats = sample_gaussian_tensors(
+                                            sents_feats_mean, 
+                                            sents_feats_log_sigma, 
+                                            self.num_samples
+                                        ) # [S, num_samples, C]
+            sampled_sents_feats = F.normalize(sampled_sents_feats.contiguous(), dim=-1)
+
+
             # compute inter_video_neg [M, K, S]
             sampled_topk_video_feats = sampled_topk_video_feats.repeat(1, 1, self.num_samples, 1).unsqueeze(2) # [M, K, 1, num_samples^2, C]
-            sampled_sents_feats = torch.repeat_interleave(sampled_sents_feats, self.num_samples, dim=-2) # [S, num_samples^2, C]
+            sampled_sents_feats = torch.repeat_interleave(
+                                        sampled_sents_feats, 
+                                        self.num_samples, 
+                                        dim=-2
+                                    ) # [S, num_samples^2, C]
             inter_video_all = torch.mul(
                 sampled_topk_video_feats,   # [M, K, 1, num_samples^2, C]
                 sampled_sents_feats,        # [S, num_samples^2, C]
@@ -382,6 +424,7 @@ class ProbEmbedContrastiveLoss(nn.Module):
         if self.inter:
             # === inter query
             inter_query_pos = inter_video_pos                       # [M, K]
+
             ## neg pairs cosine similarity
             #inter_query_all = torch.mm(
             #    sents_feats_mean,                                        # [S, C]
@@ -389,12 +432,29 @@ class ProbEmbedContrastiveLoss(nn.Module):
             #).unsqueeze(1)                                          # [S, 1, B * P]
 
             ## Probabilistic embedding approach
-            sampled_sents_feats = sample_gaussian_tensors(sents_feats_mean, sents_feats_log_sigma, self.num_samples) # [S, num_samples, C]
-            sampled_video_feats = sample_gaussian_tensors(video_feats_mean, video_feats_log_sigma, self.num_samples) # [B, P, num_samples, C]
+            sampled_sents_feats = sample_gaussian_tensors(
+                                        sents_feats_mean, 
+                                        sents_feats_log_sigma, 
+                                        self.num_samples
+                                    ) # [S, num_samples, C]
+            sampled_sents_feats = F.normalize(sampled_sents_feats.contiguous(), dim=-1)
+
+            sampled_video_feats = sample_gaussian_tensors(
+                                        video_feats_mean, 
+                                        video_feats_log_sigma, 
+                                        self.num_samples
+                                    ) # [B, P, num_samples, C]
+            sampled_video_feats = F.normalize(sampled_video_feats.contiguous(), dim=-1)
+
             # compute inter_query_neg
             sampled_sents_feats = sampled_sents_feats.repeat(1, self.num_samples, 1).unsqueeze(1)  # [S, 1, num_samples^2, C]
             sampled_video_feats = sampled_video_feats.view(B*P, self.num_samples, C)  # [B * P, num_samples, C]
-            sampled_video_feats = torch.repeat_interleave(sampled_video_feats, self.num_samples, dim=-2) # [B * P, num_samples^2, C]
+            sampled_video_feats = torch.repeat_interleave(
+                                        sampled_video_feats, 
+                                        self.num_samples, 
+                                        dim=-2
+                                    ) # [B * P, num_samples^2, C]
+
             inter_query_all = torch.mul(
                 sampled_sents_feats,  # [S, 1, num_samples^2, C]
                 sampled_video_feats,  # [B * P, num_samples^2, C]
@@ -423,8 +483,10 @@ class ProbEmbedContrastiveLoss(nn.Module):
         else:
             loss_inter_query = torch.tensor(0., device=device)
 
-        
-        return loss_inter_video, loss_inter_query
+
+
+
+        return loss_inter_video, loss_inter_query, loss_kl_constraint
 
 
 
@@ -444,7 +506,9 @@ if __name__ == '__main__':
     iou2ds = torch.rand(M, N, N)
     mask2d = (torch.rand(N, N) > 0.5).triu().bool()
 
-    loss_fn = ContrastiveLoss(pos_video_topk=3, intra=True)
+    ## test ContrastiveLoss
+    '''
+    loss_fn = ContrastiveLoss(pos_topk=1, intra=True)
     (
         loss_inter_video,
         loss_inter_query,
@@ -463,8 +527,43 @@ if __name__ == '__main__':
         loss_inter_query,
         loss_intra_video,
     )
+    '''
 
+    ## test iou loss
+    '''
     loss_fn = ScaledIoULoss(min_iou=0.1, max_iou=1)
     scores2d = torch.rand(B, N, N)
     iou2d = torch.rand(B, N, N)
     loss = loss_fn(scores2d, iou2d, mask2d)
+    '''
+
+
+    ## test ProbEmbedContrastiveLoss
+    video_feats_mean = torch.randn(B, C, N, N)
+    video_feats_log_sigma = torch.randn(B, C, N, N)
+    #video_feats_log_sigma = torch.clamp(video_feats_log_sigma, min=-1.15, max=1.15)
+    
+    sents_feats_mean = torch.randn(S, C)
+    sents_feats_log_sigma = torch.randn(S, C)
+    #sents_feats_log_sigma = torch.clamp(sents_feats_log_sigma, min=-1.15, max=1.15)
+    
+
+    loss_fn = ProbEmbedContrastiveLoss()
+    (
+        loss_inter_video,
+        loss_inter_query,
+        loss_kl_constraint,
+    ) = loss_fn(
+        video_feats_mean,
+        video_feats_log_sigma,
+        sents_feats_mean,
+        sents_feats_log_sigma,
+        num_sentences,
+        num_targets,
+        iou2d,
+        iou2ds,
+        mask2d,
+    )
+    print(f"inter_video:{loss_inter_video}")
+    print(f"inter_query:{loss_inter_query}")
+    print(f"kl_constraint:{loss_kl_constraint}")

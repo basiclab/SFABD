@@ -271,7 +271,7 @@ class ProposalConv_PE(nn.Module):
         kernel_size: int,           # kernel size
         num_layers: int,            # number of CNN layers (exclude the projection layers)
     ):
-        super(ProposalConv, self).__init__()
+        super(ProposalConv_PE, self).__init__()
         self.kernel_size = kernel_size
 
         self.blocks = nn.ModuleList()
@@ -293,6 +293,15 @@ class ProposalConv_PE(nn.Module):
 
             self.mean_proj = nn.Conv2d(hidden_channel, out_channel, 1)
             self.log_sigma_proj = nn.Conv2d(hidden_channel, out_channel, 1) 
+            
+            ## init log_sigma_proj to have small weight
+            #self.init_uncertainty_module_weight()
+
+    def init_uncertainty_module_weight(self):
+        nn.init.xavier_uniform_(self.log_sigma_proj.weight)
+        # scale down to prevent too large log_sigma
+        self.log_sigma_proj.weight = self.log_sigma_proj.weight * 0.1 
+        nn.init.constant_(self.log_sigma_proj.bias, 0)
 
 
     def get_masked_weight(self, mask, padding):
@@ -314,8 +323,12 @@ class ProposalConv_PE(nn.Module):
             x_mean = self.mean_proj(x)
             x_log_sigma = self.log_sigma_proj(x)
 
-        return x_mean, x_log_sigma, mask2d
+            # clamp log_sigma
+            ## log_sigma = 1.15 -> log_variance = 2.3 -> variance = 10
+            ## log_sigma = -1.15 -> log_variance = -2.3 -> variance = 0.1
+            x_log_sigma = torch.clamp(x_log_sigma, min=-1.15, max=1.15) 
 
+        return x_mean, x_log_sigma, mask2d
 
 
 class LanguageModel(nn.Module):
@@ -378,6 +391,15 @@ class LanguageModel_PE(nn.Module):
                 nn.Linear(768, joint_space_size),
         )
 
+        ## init log_sigma_proj to have small weight
+        #self.init_uncertainty_module_weight()
+
+    def init_uncertainty_module_weight(self):
+        nn.init.xavier_uniform_(self.log_sigma_proj[1].weight)
+        # scale down to prevent too large log_sigma
+        self.log_sigma_proj.weight = self.log_sigma_proj[1].weight * 0.1 
+        nn.init.constant_(self.log_sigma_proj[1].bias, 0)
+
     def forward(
         self,
         sents_tokens: torch.Tensor,                                         # [S, L]
@@ -389,5 +411,10 @@ class LanguageModel_PE(nn.Module):
 
         mean_feats = self.mean_proj(feats)                                  # [S, C]
         log_sigma_feats = self.log_sigma_proj(feats)                        # [S, C]
+
+        # clamp log_sigma
+        ## log_sigma = 1.15 -> log_variance = 2.3 -> variance = 10
+        ## log_sigma = -1.15 -> log_variance = -2.3 -> variance = 0.1
+        log_sigma_feats = torch.clamp(log_sigma_feats, min=-1.15, max=1.15)
         
         return mean_feats, log_sigma_feats
