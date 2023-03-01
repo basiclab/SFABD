@@ -5,7 +5,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from src.models.modules import (
-    AggregateVideo, Conv1dPool, SparseMaxPool, SparsePropConv, ProposalConv, LanguageModel)
+    AggregateVideo, Conv1dPool, SparseMaxPool, SparsePropConv, 
+    ProposalConv, LanguageModel, BboxRegression
+)
 ## for probabilistic embedding
 from src.models.modules import ProposalConv_PE, LanguageModel_PE
 from src.utils import sample_gaussian_tensors
@@ -183,7 +185,7 @@ class MMN(nn.Module):
         num_init_clips: int,
         feat1d_in_channel: int,                 # Conv1dPool
         feat1d_out_channel: int = 512,          # Conv1dPool
-        feat1d_pool_kerenl_size: int = 2,       # Conv1dPool
+        feat1d_pool_kernel_size: int = 2,       # Conv1dPool
         feat1d_pool_stride_size: int = 2,       # Conv1dPool
         feat2d_pool_counts: List[int] = [16],   # SparseMaxPool
         conv2d_hidden_channel: int = 512,       # ProposalConv
@@ -199,12 +201,13 @@ class MMN(nn.Module):
         """
         super(MMN, self).__init__()
         self.dual_space = dual_space
-        self.aggregrate = AggregateVideo(num_init_clips)
+        self.aggregate = AggregateVideo(num_init_clips)
+        
         self.video_model = nn.Sequential(
             Conv1dPool(                                     # [B, C, NUM_INIT_CLIPS]
                 feat1d_in_channel,
                 feat1d_out_channel,
-                feat1d_pool_kerenl_size,
+                feat1d_pool_kernel_size,
                 feat1d_pool_stride_size,
             ),                                              # [B, C, N]
             SparseMaxPool(feat2d_pool_counts),              # [B, C, N, N]
@@ -218,8 +221,12 @@ class MMN(nn.Module):
                 dual_space,
             )                                               # [B, C, N, N]
         )
+
         self.sents_model = LanguageModel(joint_space_size, dual_space)                   # [S, C]
 
+        ## bbox offset module
+        self.bbox_offset_head = BboxRegression(joint_space_size)
+        
         ## initialize weight
         #initialize_weights(self)
 
@@ -242,8 +249,11 @@ class MMN(nn.Module):
         assert sents_tokens.shape == sents_masks.shape
         assert sents_tokens.shape[0] == num_sentences.sum()
 
-        video_feats = self.aggregrate(video_feats, video_masks)     # [B, ?, C]
+        B = video_feats.shape[0]
+
+        video_feats = self.aggregate(video_feats, video_masks)      # [B, ?, C]
         video_feats = video_feats.permute(0, 2, 1)                  # [B, C, ?]
+
         video_feats1, video_feats2, mask2d = self.video_model(video_feats)
         sents_feats1, sents_feats2 = self.sents_model(sents_tokens, sents_masks)
 
@@ -258,12 +268,21 @@ class MMN(nn.Module):
             scores2d, logits2d = iou_scores(
                 video_feats1, sents_feats1, num_sentences, mask2d)
 
+        #### Predict proposal offset of video_feats [B, C, N, N]
+        #### [S, C, N, N] -> [S, 2, N, N] with 1x1 conv
+        ## need to predict S outputs instead of B outputs
+        scatter_s2v = torch.arange(B, device=video_feats.device).long()
+        scatter_s2v = scatter_s2v.repeat_interleave(num_sentences)          # [S]
+        bbox_offset = self.bbox_offset_head(video_feats1[scatter_s2v], sents_feats1)     # [S, 2, N, N] 
+        
+
         return (
             video_feats2,       # [B, C, N, N]  for contrastive learning
             sents_feats2,       # [S, C]        for contrastive learning
             logits2d,           # [S, N, N]     for iou loss (sim score * scale=10)
             scores2d.detach(),  # [S, N, N]     for evaluation
             mask2d.detach(),    # [N, N]
+            bbox_offset,        # [S, 2, N, N] 
         )
 
 
@@ -273,7 +292,7 @@ class MMN_PE(nn.Module):
         num_init_clips: int,
         feat1d_in_channel: int,                 # Conv1dPool
         feat1d_out_channel: int = 512,          # Conv1dPool
-        feat1d_pool_kerenl_size: int = 2,       # Conv1dPool
+        feat1d_pool_kernel_size: int = 2,       # Conv1dPool
         feat1d_pool_stride_size: int = 2,       # Conv1dPool
         feat2d_pool_counts: List[int] = [16],   # SparseMaxPool
         conv2d_hidden_channel: int = 512,       # ProposalConv
@@ -288,12 +307,12 @@ class MMN_PE(nn.Module):
             N: (N)um clips
         """
         super(MMN_PE, self).__init__()
-        self.aggregrate = AggregateVideo(num_init_clips)
+        self.aggregate = AggregateVideo(num_init_clips)
         self.video_model = nn.Sequential(
             Conv1dPool(                                     # [B, C, NUM_INIT_CLIPS]
                 feat1d_in_channel,
                 feat1d_out_channel,
-                feat1d_pool_kerenl_size,
+                feat1d_pool_kernel_size,
                 feat1d_pool_stride_size,
             ),                                              # [B, C, N]
             SparseMaxPool(feat2d_pool_counts),              # [B, C, N, N]
@@ -332,7 +351,7 @@ class MMN_PE(nn.Module):
         assert sents_tokens.shape == sents_masks.shape
         assert sents_tokens.shape[0] == num_sentences.sum()
 
-        video_feats = self.aggregrate(video_feats, video_masks)     # [B, ?, C]
+        video_feats = self.aggregate(video_feats, video_masks)     # [B, ?, C]
         video_feats = video_feats.permute(0, 2, 1)                  # [B, C, ?]
 
         # x_mean, x_log_sigma, mask2d
@@ -374,7 +393,7 @@ if __name__ == '__main__':
         NUM_INIT_CLIPS=128,
         NUM_CLIPS=64,
         feat1d_out_channel=512,
-        feat1d_pool_kerenl_size=2,
+        feat1d_pool_kernel_size=2,
         feat2d_pool_counts=[16, 8, 8],
         conv2d_hidden_channel=512,
         conv2d_kernel_size=9,
@@ -385,7 +404,7 @@ if __name__ == '__main__':
             num_init_clips=NUM_INIT_CLIPS,
             feat1d_in_channel=INIT_CHANNEL,
             feat1d_out_channel=feat1d_out_channel,
-            feat1d_pool_kerenl_size=feat1d_pool_kerenl_size,
+            feat1d_pool_kernel_size=feat1d_pool_kernel_size,
             feat1d_pool_stride_size=NUM_INIT_CLIPS // NUM_CLIPS,
             feat2d_pool_counts=feat2d_pool_counts,
             conv2d_hidden_channel=conv2d_hidden_channel,
@@ -447,7 +466,7 @@ if __name__ == '__main__':
         NUM_INIT_CLIPS=128,
         NUM_CLIPS=64,
         feat1d_out_channel=512,
-        feat1d_pool_kerenl_size=2,
+        feat1d_pool_kernel_size=2,
         feat2d_pool_counts=[16, 8, 8],
         conv2d_hidden_channel=512,
         conv2d_kernel_size=9,
@@ -459,7 +478,7 @@ if __name__ == '__main__':
             num_init_clips=NUM_INIT_CLIPS,
             feat1d_in_channel=INIT_CHANNEL,
             feat1d_out_channel=feat1d_out_channel,
-            feat1d_pool_kerenl_size=feat1d_pool_kerenl_size,
+            feat1d_pool_kernel_size=feat1d_pool_kernel_size,
             feat1d_pool_stride_size=NUM_INIT_CLIPS // NUM_CLIPS,
             feat2d_pool_counts=feat2d_pool_counts,
             conv2d_hidden_channel=conv2d_hidden_channel,
@@ -532,7 +551,7 @@ if __name__ == '__main__':
         NUM_INIT_CLIPS=128,
         NUM_CLIPS=64,
         feat1d_out_channel=512,
-        feat1d_pool_kerenl_size=2,
+        feat1d_pool_kernel_size=2,
         feat2d_pool_counts=[16, 8, 8],
         conv2d_hidden_channel=512,
         conv2d_kernel_size=9,
@@ -546,7 +565,7 @@ if __name__ == '__main__':
         NUM_INIT_CLIPS=128,
         NUM_CLIPS=64,
         feat1d_out_channel=512,
-        feat1d_pool_kerenl_size=2,
+        feat1d_pool_kernel_size=2,
         feat2d_pool_counts=[16, 8, 8],
         conv2d_hidden_channel=512,
         conv2d_kernel_size=9,
@@ -563,7 +582,7 @@ if __name__ == '__main__':
         NUM_INIT_CLIPS=32,
         NUM_CLIPS=16,
         feat1d_out_channel=512,
-        feat1d_pool_kerenl_size=2,
+        feat1d_pool_kernel_size=2,
         feat2d_pool_counts=[16],
         conv2d_hidden_channel=512,
         conv2d_kernel_size=5,
@@ -577,7 +596,7 @@ if __name__ == '__main__':
         NUM_INIT_CLIPS=256,
         NUM_CLIPS=64,
         feat1d_out_channel=512,
-        feat1d_pool_kerenl_size=4,
+        feat1d_pool_kernel_size=4,
         feat2d_pool_counts=[16, 8, 8],
         conv2d_hidden_channel=512,
         conv2d_kernel_size=9,
@@ -591,7 +610,7 @@ if __name__ == '__main__':
         NUM_INIT_CLIPS=256,
         NUM_CLIPS=128,
         feat1d_out_channel=512,
-        feat1d_pool_kerenl_size=2,
+        feat1d_pool_kernel_size=2,
         feat2d_pool_counts=[16, 8, 8, 8],
         conv2d_hidden_channel=512,
         conv2d_kernel_size=5,
