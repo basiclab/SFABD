@@ -1,5 +1,9 @@
 from typing import List, Union, Tuple, Dict
 
+import matplotlib.pyplot as plt
+import seaborn as sns
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+
 import torch
 import torch.nn.functional as F
 
@@ -15,6 +19,40 @@ def iou(
     inter = torch.minimum(ed1, ed2) - torch.maximum(st1, st2)   # [N, M]
     union = torch.maximum(ed1, ed2) - torch.minimum(st1, st2)   # [N, M]
     return inter.clamp(min=0) / union                           # [N, M]
+
+
+def batch_iou(
+    moments1: torch.Tensor,                                     # [B, N, 2]
+    moments2: torch.Tensor,                                     # [B, M, 2]
+) -> torch.Tensor:                                              # [B, N, M]
+    
+    st1 = moments1[:, :, 0:1]                                   # [B, N, 1]
+    ed1 = moments1[:, :, 1:2]                                   # [B, N, 1]
+    st2 = moments2[:, :, 0:1].permute(0, 2, 1)                  # [B, 1, M]
+    ed2 = moments2[:, :, 1:2].permute(0, 2, 1)                  # [B, 1, M]
+    inter = torch.minimum(ed1, ed2) - torch.maximum(st1, st2)   # [B, N, M]
+    union = torch.maximum(ed1, ed2) - torch.minimum(st1, st2)   # [B, N, M]
+
+    return inter.clamp(min=0) / union                           # [B, N, M]
+
+def batch_diou(
+    moments1: torch.Tensor,                                     # [B, N, 2]
+    moments2: torch.Tensor,                                     # [B, M, 2]
+) -> torch.Tensor:                                              # [B, N, M]
+    
+    st1 = moments1[:, :, 0:1]                                   # [B, N, 1]
+    ed1 = moments1[:, :, 1:2]                                   # [B, N, 1]
+    st2 = moments2[:, :, 0:1].permute(0, 2, 1)                  # [B, 1, M]
+    ed2 = moments2[:, :, 1:2].permute(0, 2, 1)                  # [B, 1, M]
+    inter = torch.minimum(ed1, ed2) - torch.maximum(st1, st2)   # [B, N, M]
+    union = torch.maximum(ed1, ed2) - torch.minimum(st1, st2)   # [B, N, M]
+
+    iou = inter.clamp(min=0) / union                            # [B, N, M]
+    mid_dist = torch.abs((st1 + ed1) / 2 - (st2 + ed2) / 2)     # [B, N, M]
+    
+    diou = iou - torch.square(mid_dist) / torch.square(union)   # [B, N, M]
+
+    return diou                                                 # [B, N, M]
 
 
 def nms_worker(
@@ -91,7 +129,7 @@ def moments_to_iou2ds(
     assert (iou2d >= 0).all() and (iou2d <= 1).all()
     return iou2d
 
-
+## separate to combined
 def iou2ds_to_iou2d(
     iou2ds: torch.Tensor,       # [M. N, N]
     num_targets: torch.Tensor,  # [S]
@@ -109,6 +147,141 @@ def iou2ds_to_iou2d(
         iou2d.append(iou2ds[start:end].max(dim=0)[0])
         start = end
     return torch.stack(iou2d, dim=0)
+
+'''
+## sns plot
+@torch.no_grad()
+def plot_moments_on_iou2d(iou2d, scores2d, moments, nms_moments, path, mask2d):
+    _, N = iou2d.shape
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(9, 4))
+
+    ticks = (torch.arange(0, N, 5) + 0.5).numpy()
+    ticklabels = [f"{idx:d}" for idx in range(0, N, 5)]
+
+    # plot iou2d and nms_moments on left subplot
+    annot = [["" for _ in range(N)] for _ in range(N)]
+    for i, (st, ed) in enumerate(nms_moments):
+        annot[st][ed - 1] = f"{i+1:d}"
+    sns.heatmap(
+        ax=ax1,
+        data=iou2d.numpy(),
+        annot=annot,
+        mask=~mask2d.numpy(),
+        vmin=0, vmax=1, cmap="plasma", fmt="s", linewidths=0.5, square=True,
+        annot_kws={"ha": "center", "va": "center_baseline"})
+    ax1.set_title("Groundtruth IoU and Predicted Moments")
+
+    # plot scores2d and groundtruth moment on right subplot
+    annot = [["" for _ in range(N)] for _ in range(N)]
+    annot[moment[0]][moment[1] - 1] = "x"
+    sns.heatmap(
+        ax=ax2,
+        data=scores2d.numpy(),
+        annot=annot,
+        mask=~mask2d.numpy(),
+        vmin=0, vmax=1, cmap="plasma", fmt="s", linewidths=0.5, square=True,
+        annot_kws={"ha": "center", "va": "center_baseline"})
+    ax2.set_title("Scores and Groundtruth Moment")
+
+    for ax in [ax1, ax2]:
+        # xlabel and xticks on top
+        ax.set_facecolor("lightgray")
+        ax.set_xlabel(r"End Time$\rightarrow$", loc='left', fontsize=10)
+        ax.set_ylabel(r"$\leftarrow$Start Time", loc='top', fontsize=10)
+        ax.set_xticks(ticks, ticklabels)
+        ax.set_yticks(ticks, ticklabels, rotation='horizontal')
+        ax.tick_params(labelbottom=False, labeltop=True, bottom=False, top=True)
+        ax.xaxis.set_label_position('top')
+
+    fig.tight_layout()
+    fig.savefig(path, bbox_inches='tight')
+    plt.close(fig)
+'''
+
+
+## matplotlib plot
+@torch.no_grad()
+def plot_moments_on_iou2d(
+    iou2d: torch.Tensor,        ## [N, N]
+    scores2d: torch.Tensor,     ## [N, N]
+    nms_moments: torch.Tensor,  ## [num_proposals_after_nms, 2]
+    path: str, 
+):
+    _, N = iou2d.shape  # N: num_clips
+
+    fig, axs = plt.subplots(1, 2, figsize=(10, 5.5))
+    offset = torch.ones(N, N).triu()*0.05 ## for better visualization
+    cm = plt.cm.get_cmap('Reds')
+
+    ## plot predicted 2d map score
+    scores2d_plot = axs[0].imshow(scores2d+offset, cmap=cm, vmin=0.0, vmax=1.0) 
+    axs[0].set(xlabel='end index', ylabel='start index')
+    axs[0].set_title("score2d")
+    divider = make_axes_locatable(axs[0])
+    cax = divider.append_axes("right", size="5%", pad=0.1)
+    plt.colorbar(scores2d_plot, cax=cax)
+
+    ## not working?
+    ## plot top 10 nms_moments on both plot
+    for i, (row, col) in enumerate(nms_moments[0:10]):
+        rect = plt.Rectangle((col-0.5, row-0.5), 1, 1, 
+                            fill=False, color='green', linewidth=1.5)
+        axs[0].add_patch(rect)
+
+    ## plot gt 2d map
+    iou2d = iou2d.sub(0.5).div(1.0 - 0.5).clamp(0, 1)   ## re-scale iou2d
+    gt_plot = axs[1].imshow(iou2d+offset, cmap=cm, vmin=0.0, vmax=1.0)
+    axs[1].set(xlabel='end index', ylabel='start index')
+    axs[1].set_title(f"GT")     
+    divider = make_axes_locatable(axs[1])
+    cax = divider.append_axes("right", size="5%", pad=0.1)
+    plt.colorbar(gt_plot, cax=cax)
+
+    ## plot top 10 nms_moments on both plot
+    for i, (row, col) in enumerate(nms_moments[0:10]):
+        rect = plt.Rectangle((col-0.5, row-0.5), 1, 1, 
+                            fill=False, color='green', linewidth=1.5)
+        axs[1].add_patch(rect)
+
+    fig.tight_layout()
+    fig.savefig(path, bbox_inches='tight')
+    plt.close(fig)
+
+
+@torch.no_grad()
+def plot_mask_and_gt(
+    iou2d: torch.Tensor,        ## [N, N]
+    mask2d: torch.Tensor,       ## [N, N]
+    path: str, 
+):
+    _, N = iou2d.shape  # N: num_clips
+
+    fig, axs = plt.subplots(1, 2, figsize=(10, 5.5))
+    offset = torch.ones(N, N).triu()*0.05 ## for better visualization
+    cm = plt.cm.get_cmap('Reds')
+
+    ## plot predicted 2d map score
+    scores2d_plot = axs[0].imshow(mask2d+offset, cmap=cm, vmin=0.0, vmax=1.0) 
+    axs[0].set(xlabel='end index', ylabel='start index')
+    axs[0].set_title("mask")
+    divider = make_axes_locatable(axs[0])
+    cax = divider.append_axes("right", size="5%", pad=0.1)
+    plt.colorbar(scores2d_plot, cax=cax)
+
+
+    ## plot gt 2d map
+    iou2d = iou2d.sub(0.5).div(1.0 - 0.5).clamp(0, 1)   ## re-scale iou2d
+    gt_plot = axs[1].imshow(iou2d+offset, cmap=cm, vmin=0.0, vmax=1.0)
+    axs[1].set(xlabel='end index', ylabel='start index')
+    axs[1].set_title(f"GT")     
+    divider = make_axes_locatable(axs[1])
+    cax = divider.append_axes("right", size="5%", pad=0.1)
+    plt.colorbar(gt_plot, cax=cax)
+
+    fig.tight_layout()
+    fig.savefig(path, bbox_inches='tight')
+    plt.close(fig)
+
 
 
 def l2_normalize(tensor, axis=-1):
