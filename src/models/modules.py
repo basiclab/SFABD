@@ -22,6 +22,7 @@ class AggregateVideo(nn.Module):
         feats_bucket = []
         for i in range(self.tgt_num):
             s, e = idxs[i], idxs[i + 1]
+            #print(f"s:{s}, e:{e}")
             if s < e:
                 feats_bucket.append(video_feats[s:e].mean(dim=0))
             else:
@@ -39,7 +40,6 @@ class AggregateVideo(nn.Module):
             out_feats.append(out_feat)
         out_feats = torch.stack(out_feats)
         return out_feats
-
 
 class Conv1dPool(nn.Module):
     def __init__(self, in_channel, out_channel, pool_kernel_size, pool_stride_size):
@@ -62,11 +62,11 @@ class Conv1dPool(nn.Module):
         x = self.model(x)       # [B, C, D]
         return x
 
-
 class SparseMaxPool(nn.Module):
     def __init__(self, counts):
         super().__init__()
         self.counts = counts
+        #self.proj = nn.Conv2d(512, 256, 1)
 
     def forward(self, x):
         B, C, N = x.shape
@@ -87,14 +87,18 @@ class SparseMaxPool(nn.Module):
                 offset += stride
             offset += stride
             stride *= 2
+        
+        #x2d = self.proj(x2d)
         return x2d, mask2d
-
+        #return x2d, x2d, mask2d
 
 class SparsePropConv(nn.Module):
     def __init__(self, counts, hidden_size):
         super().__init__()
         self.num_scale_layers = counts
         self.hidden_size = hidden_size
+        #self.proj = nn.Conv2d(512, 256, 1) # testing
+        # torch.nn.init.normal_(self.proj.weight, std=0.2)
 
         self.convs = nn.ModuleList()
         for layer_idx, layer_count in enumerate(self.num_scale_layers):
@@ -121,7 +125,7 @@ class SparsePropConv(nn.Module):
                             )
                         ])
                 '''
-                
+                '''
                 ## maxpool except first input
                 for i in range(1, layer_count):
                     self.convs.extend([
@@ -134,7 +138,6 @@ class SparsePropConv(nn.Module):
                     nn.BatchNorm1d(hidden_size),
                     nn.ReLU(),
                 ) for _ in range(layer_count-1)])  
-                '''
 
             ## other layers 
             else: 
@@ -143,9 +146,6 @@ class SparsePropConv(nn.Module):
                     nn.Conv1d(hidden_size, hidden_size, 2, 1),
                     nn.BatchNorm1d(hidden_size),
                     nn.ReLU(),
-                    ## reverse BN, ReLU order
-                    #nn.ReLU(),
-                    #nn.BatchNorm1d(hidden_size),
                 ) for _ in range(layer_count-1)])            
 
                 '''
@@ -194,24 +194,25 @@ class SparsePropConv(nn.Module):
 
             offset += stride
             stride *= 2
+        
+        #x2d = self.proj(x2d)
 
         return x2d, mask2d
-
-
+        #return x2d, x2d, mask2d
 
 class ProposalConv(nn.Module):
     def __init__(
         self,
-        in_channel: int,            # input feature size
-        hidden_channel: int,        # hidden feature size
-        out_channel: int,           # output feature size
+        in_channel: int,            # input feature size (512)
+        hidden_channel: int,        # hidden feature size (512)
+        out_channel: int,           # output feature size (256)
         kernel_size: int,           # kernel size
         num_layers: int,            # number of CNN layers (exclude the projection layers)
-        dual_scpae: bool = False    # whether to use dual feature scpace
+        dual_space: bool = False    # whether to use dual feature scpace
     ):
         super(ProposalConv, self).__init__()
         self.kernel_size = kernel_size
-        self.dual_scpae = dual_scpae
+        self.dual_space = dual_space
 
         self.blocks = nn.ModuleList()
         self.paddings = []
@@ -227,14 +228,11 @@ class ProposalConv(nn.Module):
                     channel, hidden_channel, kernel_size, padding=padding),
                 nn.BatchNorm2d(hidden_channel),
                 nn.ReLU(inplace=True),
-                ## reverse BN, ReLU order
-                #nn.ReLU(inplace=True),
-                #nn.BatchNorm2d(hidden_channel),
             ))
             self.paddings.append(padding)
 
-        if dual_scpae:
-            self.proj1 = nn.Conv2d(hidden_channel, out_channel, 1)
+        if dual_space:
+            self.proj1 = nn.Conv2d(hidden_channel, out_channel, 1) ## 512 -> 256
             self.proj2 = nn.Conv2d(hidden_channel, out_channel, 1)
         else:
             self.proj = nn.Conv2d(hidden_channel, out_channel, 1)
@@ -254,14 +252,76 @@ class ProposalConv(nn.Module):
         for padding, block in zip(self.paddings, self.blocks):
             mask, masked_weight = self.get_masked_weight(mask, padding)
             x = block(x) * masked_weight
-        if self.dual_scpae:
+            
+        if self.dual_space:
             x1 = self.proj1(x)
             x2 = self.proj2(x)
         else:
             x1 = self.proj(x)
             x2 = x1
+            
         return x1, x2, mask2d
 
+class LanguageModel(nn.Module):
+    def __init__(self, joint_space_size, dual_space=False):
+        super().__init__()
+        self.dual_space = dual_space
+
+        logging.set_verbosity_error()
+        self.bert = DistilBertModel.from_pretrained('distilbert-base-uncased')
+        logging.set_verbosity_warning()
+
+        if dual_space:
+            self.proj1 = nn.Sequential(
+                nn.LayerNorm(768),
+                nn.Linear(768, joint_space_size),
+            )
+            self.proj2 = nn.Sequential(
+                nn.LayerNorm(768),
+                nn.Linear(768, joint_space_size),
+            )
+        else:
+            self.proj = nn.Sequential(
+                nn.LayerNorm(768),
+                nn.Linear(768, joint_space_size),
+            )
+
+    def forward(
+        self,
+        sents_tokens: torch.Tensor,                                         # [S, L]
+        sents_masks: torch.Tensor,                                          # [S, L]
+    ):
+        feats = self.bert(sents_tokens, attention_mask=sents_masks)[0]      # [S, L, C]
+        feats = (feats * sents_masks.unsqueeze(-1)).sum(dim=1)              # [S, C]
+        feats = feats / sents_masks.sum(dim=1, keepdim=True)                # [S, C]
+
+        if self.dual_space:
+            feats1 = self.proj1(feats)                                      # [S, C]
+            feats2 = self.proj2(feats)                                      # [S, C]
+        else:
+            feats1 = self.proj(feats)                                       # [S, C]
+            feats2 = feats1                                                 # [S, C]
+        return feats1, feats2
+
+## Bbox regression
+class BboxRegression(nn.Module):
+    def __init__(
+        self,
+        in_channel: int,        # dim of embedding space
+    ):
+        super().__init__()
+        self.offset_predictor = nn.Conv2d(in_channel, 2, 1)
+
+    def forward(
+        self, 
+        video_feats,  ## [B, C, N, N] 
+        sent_feats,   ## [S, C]
+    ):
+        offset = self.offset_predictor(video_feats) ## [B, 2, N, N],  delta_s and delta_e
+        
+        return offset
+
+     
 class ProposalConv_PE(nn.Module):
     def __init__(
         self,
@@ -329,49 +389,6 @@ class ProposalConv_PE(nn.Module):
             x_log_sigma = torch.clamp(x_log_sigma, min=-1.15, max=1.15) 
 
         return x_mean, x_log_sigma, mask2d
-
-
-class LanguageModel(nn.Module):
-    def __init__(self, joint_space_size, dual_scpae=False):
-        super().__init__()
-        self.dual_scpae = dual_scpae
-
-        logging.set_verbosity_error()
-        self.bert = DistilBertModel.from_pretrained('distilbert-base-uncased')
-        logging.set_verbosity_warning()
-
-        if dual_scpae:
-            self.proj1 = nn.Sequential(
-                nn.LayerNorm(768),
-                nn.Linear(768, joint_space_size),
-            )
-            self.proj2 = nn.Sequential(
-                nn.LayerNorm(768),
-                nn.Linear(768, joint_space_size),
-            )
-        else:
-            self.proj = nn.Sequential(
-                nn.LayerNorm(768),
-                nn.Linear(768, joint_space_size),
-            )
-
-    def forward(
-        self,
-        sents_tokens: torch.Tensor,                                         # [S, L]
-        sents_masks: torch.Tensor,                                          # [S, L]
-    ):
-        feats = self.bert(sents_tokens, attention_mask=sents_masks)[0]      # [S, L, C]
-        feats = (feats * sents_masks.unsqueeze(-1)).sum(dim=1)              # [S, C]
-        feats = feats / sents_masks.sum(dim=1, keepdim=True)                # [S, C]
-
-        if self.dual_scpae:
-            feats1 = self.proj1(feats)                                      # [S, C]
-            feats2 = self.proj2(feats)                                      # [S, C]
-        else:
-            feats1 = self.proj(feats)                                       # [S, C]
-            feats2 = feats1                                                 # [S, C]
-        return feats1, feats2
-
 
 class LanguageModel_PE(nn.Module):
     def __init__(self, joint_space_size):
