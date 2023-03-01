@@ -149,6 +149,9 @@ def calculate_mAPs(
     num_targets = true_moments['num_targets']
 
     calc_buffer = []
+    ## buffer for single-target and multi-target samples
+    calc_buffer_single = []
+    calc_buffer_multi = []
     shift_p = 0
     shift_t = 0
     for num_p, num_t in zip(num_proposals, num_targets):
@@ -157,21 +160,65 @@ def calculate_mAPs(
             out_moments[shift_p: shift_p + num_p],
             out_scores1ds[shift_p: shift_p + num_p],
         ])
+
+        if num_t == 1: ## single-target
+            calc_buffer_single.append([
+                tgt_moments[shift_t: shift_t + num_t],
+                out_moments[shift_p: shift_p + num_p],
+                out_scores1ds[shift_p: shift_p + num_p],
+            ])
+    
+        else:          ## multi-target
+            calc_buffer_multi.append([
+                tgt_moments[shift_t: shift_t + num_t],
+                out_moments[shift_p: shift_p + num_p],
+                out_scores1ds[shift_p: shift_p + num_p],
+            ])
+
         shift_p += num_p
         shift_t += num_t
 
+    ## mAP for all data
     APs = []
     for data in tqdm(calc_buffer, ncols=0, leave=False, desc="mAP",
                      disable=not dist.is_main()):
         APs.append(calculate_APs_worker(*data, mAP_ious, max_proposals))
     mAPs = torch.stack(APs).mean(dim=0)
-
     results = {}
     for i, mAP_iou in enumerate(mAP_ious):
         results[mAP_name(mAP_iou)] = mAPs[i].item()
+
+    ## mAP for single-target
+    APs_single = []
+    for data in tqdm(calc_buffer_single, ncols=0, leave=False, desc="mAP",
+                     disable=not dist.is_main()):
+        APs_single.append(calculate_APs_worker(*data, mAP_ious, max_proposals))
+    mAPs_single = torch.stack(APs_single).mean(dim=0)
+    results_single = {}
+    for i, mAP_iou in enumerate(mAP_ious):
+        results_single[mAP_name(mAP_iou)] = mAPs_single[i].item()
+
+    ## mAP for multi-targets
+    APs_multi = []
+    for data in tqdm(calc_buffer_multi, ncols=0, leave=False, desc="mAP",
+                     disable=not dist.is_main()):
+        APs_multi.append(calculate_APs_worker(*data, mAP_ious, max_proposals))
+    mAPs_multi = torch.stack(APs_multi).mean(dim=0)
+    results_multi = {}
+    for i, mAP_iou in enumerate(mAP_ious):
+        results_multi[mAP_name(mAP_iou)] = mAPs_multi[i].item()
+
+
 
     return {
         mAP_name(0.5): results[mAP_name(0.5)],
         mAP_name(0.75): results[mAP_name(0.75)],
         'avg_mAP': mAPs.mean().item(),
+
+        f"single_{mAP_name(0.5)}": results_single[mAP_name(0.5)],
+        f"single_{mAP_name(0.75)}": results_single[mAP_name(0.75)],
+        'single_avg_mAP': mAPs_single.mean().item(),
+        f"multi_{mAP_name(0.5)}": results_multi[mAP_name(0.5)],
+        f"multi_{mAP_name(0.75)}": results_multi[mAP_name(0.75)],
+        'multi_avg_mAP': mAPs_multi.mean().item(),
     }
