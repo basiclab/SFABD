@@ -38,6 +38,12 @@ Folder structure of `./data`.
     CUDA_VISIBLE_DEVICES=0,1,2,3 python train.py --config path/to/config.json --logdir path/to/log/dir
     ```
 
+## Submission
+- Make sumbission zip file.
+    ```
+    python train.py --config path/to/config.json --logdir path/to/log/dir
+    ```
+
 ## Tensorboard
 ```
 tensorboard --logdir path/to/log
