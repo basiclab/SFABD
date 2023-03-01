@@ -77,6 +77,7 @@ class CollateBase(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         anno = self.annos[idx]
         video_feats = self.get_feat(anno)
+        
         return {
             'video_feats': video_feats,
             **anno,
