@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.utils import sample_gaussian_tensors
+from src.utils import batch_iou, batch_diou, sample_gaussian_tensors, plot_mask_and_gt
 
 class ScaledIoULoss(nn.Module):
     def __init__(self, min_iou, max_iou):
@@ -33,6 +33,105 @@ class ScaledIoULoss(nn.Module):
         loss = F.binary_cross_entropy_with_logits(logits1d, iou1d)
         return loss
 
+## fore/background binary classification
+class ConfidenceLoss(nn.Module):
+    def __init__(
+        self, 
+        iou_threshold: float = 0.75
+    ):
+        super().__init__()
+        self.iou_threshold = iou_threshold
+
+    def forward(
+            self,
+            logits2d: torch.Tensor,     # [S, N, N]
+            iou2d: torch.Tensor,        # [S, N, N]
+            iou2ds: torch.Tensor,       # [M, N, N]
+            mask2d: torch.Tensor,       # [N, N]
+            num_targets: torch.Tensor,  # [S] number of targets for each sentence
+    ):
+        """
+            B: (B)atch size
+            N: (N)um clips
+            S: number of (S)entences
+            P: number of (P)roposals = number of 1 in mask2d
+        """
+        S, _, _ = logits2d.shape
+        M = iou2ds.shape[0]
+        assert logits2d.shape == iou2d.shape, f"{logits2d.shape} != {iou2d.shape}"
+        device = logits2d.device
+        logits1d = logits2d.masked_select(mask2d).view(S, -1)   # [S, P]
+        iou1d = iou2d.masked_select(mask2d).view(S, -1)         # [S, P]
+        P = iou1d.shape[1]
+        
+        ## select top1 for each targets
+        iou1ds = iou2ds.masked_select(mask2d).view(M, -1)       # [M, P]
+        top1_idxs = iou1ds.topk(1, dim=1)[1]                    # [M, 1]
+        target = torch.zeros(S, P, device=device)               # [S, P], backgrounds are 0
+        target_count = 0
+        for sent_idx, num_target in enumerate(num_targets):
+            for i in range(num_target):
+                top1_prop_idx = int(top1_idxs[target_count + i])
+                target[sent_idx, top1_prop_idx] = 1
+            target_count += num_target
+        
+        ## select proposals with > IoU threshold as foreground
+        target[iou1d > self.iou_threshold] = 1                  # foregrounds are 1
+        
+        loss = F.binary_cross_entropy_with_logits(logits1d, target)
+        
+        return loss
+
+## Bbox IoU loss between pred bbox and gt bbox
+class BboxRegressionLoss(nn.Module):
+    def __init__(
+        self,
+        iou_threshold: float = 0.75,
+    ):
+        super().__init__()
+        self.iou_threshold = iou_threshold
+    
+    def forward(
+        self,
+        out_moments: torch.Tensor,  # [S, P', 2]
+        tgt_moments: torch.Tensor,  # [M, 2]
+        num_targets: torch.Tensor,  # [S]
+        iou2ds: torch.Tensor,       # [M, N, N]
+        mask2d: torch.Tensor,       # [N, N]
+        valid_mask: torch.Tensor,   # [S, P]
+    ):
+        device = iou2ds.device
+        M, N, _ = iou2ds.shape
+        S, P_prime, _ = out_moments.shape
+        # moment idx -> sentence idx
+        scatter_m2s = torch.arange(S, device=device).long()
+        scatter_m2s = scatter_m2s.repeat_interleave(num_targets)    # [M]
+
+        out_moments = out_moments[scatter_m2s]                      # [M, P, 2]
+        ## compute iou with tgt_moments
+        ## [M, P, 2],  [M, 1, 2] -> [M, P, 1]
+        bbox_iou = batch_diou(out_moments, tgt_moments.unsqueeze(1)) # [M, P, 1]
+        bbox_iou = bbox_iou.squeeze()                               # [M, P]
+        
+        ## create mask to find responsible anchors for each target
+        ## select top1 for each M targets
+        iou1ds = iou2ds.masked_select(mask2d).view(M, -1)           # [M, P]
+        iou1ds = iou1ds.masked_select(valid_mask).view(S, -1)       # [M, P']
+        top1_idxs = iou1ds.topk(1, dim=1)[1]                        # [M, 1]
+        target_mask = torch.zeros(M, P_prime, device=device)        # [M, P']
+        target_mask[range(M), top1_idxs.squeeze()] = 1
+        
+        ## select anchors with GT_IoU > IoU_threshold
+        target_mask[iou1ds > self.iou_threshold] = 1                # foregrounds are 1
+        
+        ## compute loss for all anchors bbox prediction
+        loss = 1 - bbox_iou                                         # [M, P]
+
+        ## sum loss only at target_mask anchors
+        loss = (loss * target_mask).sum()                           
+
+        return loss
+    
 
 class ContrastiveLoss(nn.Module):
     def __init__(
@@ -115,7 +214,7 @@ class ContrastiveLoss(nn.Module):
         sents_feats = F.normalize(sents_feats.contiguous(), dim=-1)     # [S, C]
 
         if self.inter:
-            # === inter video
+            # === inter video (topk proposal -> all sentences)
             topk_idxs = iou2ds.topk(K, dim=1)[1]                    # [M, K]
             topk_idxs = topk_idxs.unsqueeze(-1).expand(-1, -1, C)   # [M, K, C]
             allm_video_feats = video_feats[scatter_m2v]             # [M, P, C]
@@ -141,26 +240,90 @@ class ContrastiveLoss(nn.Module):
                 self.T_v,
                 self.margin,
             )
+            
         else:
             loss_inter_video = torch.tensor(0., device=device)
 
+
         if self.inter:
-            # === inter query
+            # === inter query (sentence -> all video proposals)
             inter_query_pos = inter_video_pos                       # [M, K]
 
             inter_query_all = torch.mm(
                 sents_feats,                                        # [S, C]
                 video_feats.view(-1, C).t(),                        # [C, B * P]
             ).unsqueeze(1)                                          # [S, 1, B * P]
+
             pos_mask = torch.eye(B, device=device).bool()           # [B, B]
             pos_mask = pos_mask.unsqueeze(-1)                       # [B, B, 1]
             pos_mask = pos_mask.expand(-1, -1, P)                   # [B, B, P]
             pos_mask = pos_mask.reshape(B, -1)                      # [B, B * P]
             pos_mask = pos_mask[scatter_s2v]                        # [S, B * P]
             assert pos_mask.long().sum(dim=-1).eq(P).all()
+
             s2v_pos_mask = iou2d > self.neg_iou                     # [S, P]
-            pos_mask[pos_mask.clone()] = s2v_pos_mask.view(-1)
+            
+            '''
+            ###### for top1 pos sample selection
+            ## to do: at least choose top 1 for each target as pos
+            ##        otherwise tiny clip (iou < 0.5) will be considered neg
+            top1_idxs = iou2ds.topk(1, dim=1)[1]                    # [M, 1]
+            top1_pos_mask = torch.zeros(S, P, device=device)
+            target_count = 0
+            for idx, num_target in enumerate(num_targets):          # [S]
+                for i in range(num_target):
+                    top1_prop_idx = int(top1_idxs[target_count + i])
+                    top1_pos_mask[idx, top1_prop_idx] = 1             
+                target_count += num_target
+            ## top1_pos_mask:   [S, P], top1 proposal is 1, others are 0
+            ## element-wise or, make sure that top1 proposal with IoU < 0.5 is also pos sample
+            s2v_pos_mask = torch.logical_or(s2v_pos_mask, top1_pos_mask)    # [S, P]
+            ######
+            '''
+            
+            ## for indexing, but how to write this in a better way?
+            backup_pos_mask = pos_mask.clone()                      # [S, B * P]
+            pos_mask[backup_pos_mask] = s2v_pos_mask.view(-1)       # [S, B * P] 
             inter_query_neg_mask = ~pos_mask.unsqueeze(1)           # [S, 1, B * P]
+            
+            
+            ###### for neg sample selection
+            '''
+            ## don't choose lower-left corner as neg samples
+            top1_position = torch.zeros(M, P, device=device)
+            top1_position[range(M), top1_idxs.squeeze()] = 1        # [M, P] ## top1 = 1,  others = 0
+            top1_map = torch.zeros(M, N * N, device=device)
+            top1_map[mask2d.view(1, -1).repeat(M, 1)] = top1_position.view(-1)
+            top1_map = top1_map.reshape(M, N, N)                    # [M, N, N]
+            top1_position_on_map = top1_map.nonzero()[:, 1:]        # [M, 2]
+
+            ## build lower-left mask [S, N, N]
+            lower_left_mask = torch.ones(S, N, N, device=device)
+            target_count = 0
+            for idx, num_target in enumerate(num_targets):  # [S]
+                for i in range(num_target):
+                    start, end = top1_position_on_map[target_count + i]
+                    gt_len = end + 1 - start
+                    for s in range(start, end+1):
+                        for e in range(start, end+1):
+                            ## proposals that has len < xx% of gt_len are still
+                            ## neg samples
+                            if s <= e and (e+1-s) > int(gt_len*0.0):
+                                ## lower-left corner set to 0
+                                lower_left_mask[idx, s, e] = 0
+                    
+                target_count += num_target
+
+            ## lower-left: 0, others: 1
+            lower_left_mask = lower_left_mask.masked_select(mask2d).view(S, -1)     # [S, P]
+            s2v_neg_mask = ~s2v_pos_mask                                            # [S, P]
+            ## for plotting
+            original_s2v_neg_mask = s2v_neg_mask.clone()
+            ## don't choose the lower-left corner as negative samples
+            s2v_neg_mask = torch.logical_and(s2v_neg_mask, lower_left_mask)         # [S, P]
+            inter_query_neg_mask[backup_pos_mask.unsqueeze(1)] = s2v_neg_mask.view(-1)
+            '''
+            
 
             loss_inter_query = self.log_cross_entropy(
                 inter_query_pos,                                    # [M, K]
@@ -169,23 +332,48 @@ class ContrastiveLoss(nn.Module):
                 self.T_q,
                 self.margin,
             )
+
+            ###### for plotting mask
+            '''
+            ## save gt_iou, pos_mask, neg_mask to check
+            ## convert iou2d, pos_mask, neg_mask back to 2d map
+            #iou2d = iou2d.masked_select(mask2d).view(S, -1)                 # [S, P]
+            gt_iou2d = torch.zeros(N, N)
+            gt_iou2d[mask2d] = iou2d[0].cpu()
+            pos_mask2d = torch.zeros(N, N, dtype=torch.long)
+            pos_mask2d[mask2d] = s2v_pos_mask.long()[0].cpu()
+            neg_mask2d = torch.zeros(N, N, dtype=torch.long)
+            neg_mask2d[mask2d] = s2v_neg_mask.long()[0].cpu()
+            original_neg_mask2d = torch.zeros(N, N, dtype=torch.long)
+            original_neg_mask2d[mask2d] = original_s2v_neg_mask.long()[0].cpu()
+            
+            plot_mask_and_gt(gt_iou2d, pos_mask2d, path="./logs/pos.jpg")
+            plot_mask_and_gt(gt_iou2d, neg_mask2d, path="./logs/neg.jpg")
+            plot_mask_and_gt(gt_iou2d, original_neg_mask2d, path="./logs/original_neg.jpg")
+            '''
+
         else:
             loss_inter_query = torch.tensor(0., device=device)
 
+        #### Do not compute whole batch (original)
+        '''
         if self.intra:
             # === intra video
             shift = 0
             combinations = []
             scatter_e2s = []
             for i, num in enumerate(num_targets):
-                pairs = torch.ones(
-                    num * K, num * K, device=device).nonzero()      # [num * K * num * K, 2]
-                combinations.append(pairs + shift)
-                scatter_e2s.append(torch.ones(len(pairs), device=device) * i)
-                shift += num * K
+                ## only for multi-target samples
+                if num > 1: 
+                    pairs = torch.ones(
+                        num * K, num * K, device=device).nonzero()      # [num * K * num * K, 2]
+                    combinations.append(pairs + shift)
+                    scatter_e2s.append(torch.ones(len(pairs), device=device) * i)
+                    shift += num * K
+
             # E: number of (E)numerated positive pairs
             ref_idx, pos_idx = torch.cat(combinations, dim=0).t()   # [E], [E]
-            scatter_e2s = torch.cat(scatter_e2s, dim=0).long()      # [E]
+            scatter_e2s = torch.cat(scatter_e2s, dim=0).long()      # [E]  ex.[0, 0, 0, 1, 1, 1...]
             assert (ref_idx < M * K).all()
             assert (pos_idx < M * K).all()
 
@@ -195,11 +383,18 @@ class ContrastiveLoss(nn.Module):
                 pos_video_feats[pos_idx],                           # [E, C]
             ).sum(dim=1)                                            # [E]
 
+            ## all moment M x all proposals P from corresponding video 
             intra_video_all = torch.mul(
                 topk_video_feats.unsqueeze(2),                      # [M, K, 1, C]
                 video_feats[scatter_m2v].unsqueeze(1),              # [M, 1, P, C]
             ).sum(dim=-1).reshape(M * K, -1)                        # [M * K, P]
+            
+            # video_feats.view(-1, C).t(),                        # [C, B * P]
+            
+            ## original neg mask
             intra_video_neg_mask = iou2d < self.neg_iou             # [S, P]
+            ## Don't choose lower left as negative sample
+            #intra_video_neg_mask = s2v_neg_mask                     # [S, P]
 
             loss_intra_video = self.log_cross_entropy(
                 intra_video_pos,                                    # [E]
@@ -207,6 +402,54 @@ class ContrastiveLoss(nn.Module):
                 intra_video_neg_mask[scatter_e2s],                  # [E, P]
                 self.T_v,
             )
+
+        else:
+            loss_intra_video = torch.tensor(0., device=device)
+        '''
+         
+        #### Compute whole batch (testing now)
+        if self.intra:
+            # === intra video
+            shift = 0
+            combinations = []
+            scatter_e2s = []
+            for i, num in enumerate(num_targets):
+                ## only for multi-target samples
+                if num > 1: 
+                    pairs = torch.ones(
+                        num * K, num * K, device=device).nonzero()      # [num * K * num * K, 2]
+                    combinations.append(pairs + shift)
+                    scatter_e2s.append(torch.ones(len(pairs), device=device) * i)
+                    shift += num * K
+
+            # E: number of (E)numerated positive pairs
+            ref_idx, pos_idx = torch.cat(combinations, dim=0).t()   # [E], [E]
+            scatter_e2s = torch.cat(scatter_e2s, dim=0).long()      # [E]  ex.[0, 0, 0, 1, 1, 1...]
+            assert (ref_idx < M * K).all()
+            assert (pos_idx < M * K).all()
+
+            pos_video_feats = topk_video_feats.reshape(M * K, C)    # [M * K, C]
+            intra_video_pos = torch.mul(
+                pos_video_feats[ref_idx],                           # [E, C]
+                pos_video_feats[pos_idx],                           # [E, C]
+            ).sum(dim=1)                                            # [E]
+
+            ## all moment M x all proposals B * P in the batch
+            intra_video_all = torch.mm(
+                pos_video_feats,                                    # [M * K, C]
+                video_feats.view(-1, C).t(),                        # [C, B * P]
+            )                                                       # [M * K, B * P]
+            
+            ## same mask as inter query (sentence -> proposals)
+            intra_video_neg_mask = inter_query_neg_mask.clone().squeeze() # [S, B * P]
+            
+            loss_intra_video = self.log_cross_entropy(
+                intra_video_pos,                                    # [E]
+                intra_video_all[ref_idx],                           # [E, B * P]
+                intra_video_neg_mask[scatter_e2s],                  # [E, B * P] 
+                self.T_v,
+            )
+
         else:
             loss_intra_video = torch.tensor(0., device=device)
 
@@ -494,7 +737,7 @@ class ProbEmbedContrastiveLoss(nn.Module):
 if __name__ == '__main__':
     B = 4
     C = 256
-    N = 32
+    N = 64
     S = 8
 
     video_feats = torch.randn(B, C, N, N)
@@ -507,7 +750,7 @@ if __name__ == '__main__':
     mask2d = (torch.rand(N, N) > 0.5).triu().bool()
 
     ## test ContrastiveLoss
-    '''
+    
     loss_fn = ContrastiveLoss(pos_topk=1, intra=True)
     (
         loss_inter_video,
@@ -527,7 +770,7 @@ if __name__ == '__main__':
         loss_inter_query,
         loss_intra_video,
     )
-    '''
+    
 
     ## test iou loss
     '''
@@ -537,7 +780,7 @@ if __name__ == '__main__':
     loss = loss_fn(scores2d, iou2d, mask2d)
     '''
 
-
+    '''
     ## test ProbEmbedContrastiveLoss
     video_feats_mean = torch.randn(B, C, N, N)
     video_feats_log_sigma = torch.randn(B, C, N, N)
@@ -567,3 +810,4 @@ if __name__ == '__main__':
     print(f"inter_video:{loss_inter_video}")
     print(f"inter_query:{loss_inter_query}")
     print(f"kl_constraint:{loss_kl_constraint}")
+    '''
