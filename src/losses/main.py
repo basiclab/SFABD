@@ -127,8 +127,8 @@ class BboxRegressionLoss(nn.Module):
         ## compute loss for all anchors bbox prediction
         loss = 1 - bbox_iou                                         # [M, P]
 
-        ## sum loss only at target_mask anchors
-        loss = (loss * target_mask).sum()                           
+        ## compute avg loss only anchors with target_mask = 1
+        loss = (loss * target_mask).sum() / target_mask.sum()                        
 
         return loss
     
