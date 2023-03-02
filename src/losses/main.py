@@ -93,16 +93,16 @@ class BboxRegressionLoss(nn.Module):
     
     def forward(
         self,
-        out_moments: torch.Tensor,  # [S, P', 2]
+        out_moments: torch.Tensor,  # [S, P, 2]
         tgt_moments: torch.Tensor,  # [M, 2]
         num_targets: torch.Tensor,  # [S]
         iou2ds: torch.Tensor,       # [M, N, N]
         mask2d: torch.Tensor,       # [N, N]
-        valid_mask: torch.Tensor,   # [S, P]
+        #valid_mask: torch.Tensor,   # [S, P]
     ):
         device = iou2ds.device
         M, N, _ = iou2ds.shape
-        S, P_prime, _ = out_moments.shape
+        S, P, _ = out_moments.shape
         # moment idx -> sentence idx
         scatter_m2s = torch.arange(S, device=device).long()
         scatter_m2s = scatter_m2s.repeat_interleave(num_targets)    # [M]
@@ -110,15 +110,15 @@ class BboxRegressionLoss(nn.Module):
         out_moments = out_moments[scatter_m2s]                      # [M, P, 2]
         ## compute iou with tgt_moments
         ## [M, P, 2],  [M, 1, 2] -> [M, P, 1]
-        bbox_iou = batch_diou(out_moments, tgt_moments.unsqueeze(1)) # [M, P, 1]
+        bbox_iou = batch_diou(out_moments, tgt_moments.unsqueeze(1))# [M, P, 1]
         bbox_iou = bbox_iou.squeeze()                               # [M, P]
         
         ## create mask to find responsible anchors for each target
         ## select top1 for each M targets
         iou1ds = iou2ds.masked_select(mask2d).view(M, -1)           # [M, P]
-        iou1ds = iou1ds.masked_select(valid_mask).view(S, -1)       # [M, P']
+        #iou1ds = iou1ds.masked_select(valid_mask).view(M, -1)      # [M, P]
         top1_idxs = iou1ds.topk(1, dim=1)[1]                        # [M, 1]
-        target_mask = torch.zeros(M, P_prime, device=device)        # [M, P']
+        target_mask = torch.zeros(M, P, device=device)              # [M, P]
         target_mask[range(M), top1_idxs.squeeze()] = 1
         
         ## select anchors with GT_IoU > IoU_threshold
