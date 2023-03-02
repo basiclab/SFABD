@@ -422,6 +422,12 @@ class ContrastiveLoss(nn.Module):
                     scatter_e2s.append(torch.ones(len(pairs), device=device) * i)
                     shift += num * K
 
+            ## RuntimeError: torch.cat(): expected a non-empty list of Tensors
+            ## sometimes a batch only contains single-target samples, so combination is empty
+            if len(combinations) == 0:
+                loss_intra_video = torch.tensor(0., device=device)
+                return loss_inter_video, loss_inter_query, loss_intra_video
+
             # E: number of (E)numerated positive pairs
             ref_idx, pos_idx = torch.cat(combinations, dim=0).t()   # [E], [E]
             scatter_e2s = torch.cat(scatter_e2s, dim=0).long()      # [E]  ex.[0, 0, 0, 1, 1, 1...]
