@@ -186,19 +186,19 @@ def calculate_mAPs(
             target_length = target[1] - target[0]
             if target_length <= 0.15:   ## short clips
                 calc_buffer_short.append([
-                    target,
+                    target.unsqueeze(0),
                     out_moments[shift_p: shift_p + num_p],
                     out_scores1ds[shift_p: shift_p + num_p],
                 ])
             elif target_length > 0.15 and target_length <= 0.5:
                 calc_buffer_medium.append([
-                    target,
+                    target.unsqueeze(0),
                     out_moments[shift_p: shift_p + num_p],
                     out_scores1ds[shift_p: shift_p + num_p],
                 ])
             elif target_length > 0.5:
                 calc_buffer_long.append([
-                    target,
+                    target.unsqueeze(0),
                     out_moments[shift_p: shift_p + num_p],
                     out_scores1ds[shift_p: shift_p + num_p],
                 ])
@@ -288,5 +288,4 @@ def calculate_mAPs(
         f"long_{mAP_name(0.5)}": results_long[mAP_name(0.5)],
         f"long_{mAP_name(0.75)}": results_long[mAP_name(0.75)],
         'long_avg_mAP': mAPs_long.mean().item(),
-        
     }
