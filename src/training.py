@@ -1012,12 +1012,23 @@ def training_loop_bbox_reg(config: AttrDict):
             test_writer.add_scalar(f'recall/{name}', value, 0)
         for name, value in test_mAPs.items():
             test_writer.add_scalar(f'mAP/{name}', value, 0)
-        print_table(epoch=0, rows={'test': test_recall})
-        print_table(epoch=0, rows={'test': test_mAPs})
 
+        ## split mAPs table, too long to print on terminal
+        mAP_keys_group_1 = ["avg_mAP", "mAP@0.50", "mAP@0.75", 
+                            "single_avg_mAP", "single_mAP@0.50", "single_mAP@0.75",
+                            "multi_avg_mAP", "multi_mAP@0.50", "multi_mAP@0.75",]
+        mAP_keys_group_2 = ["short_avg_mAP", "short_mAP@0.50", "short_mAP@0.75",
+                            "medium_avg_mAP", "medium_mAP@0.50", "medium_mAP@0.75",
+                            "long_avg_mAP", "long_mAP@0.50", "long_mAP@0.75"]
+        test_mAPs_group_1 = {key: test_mAPs[key] for key in mAP_keys_group_1}
+        test_mAPs_group_2 = {key: test_mAPs[key] for key in mAP_keys_group_2}
+        
+        # print to terminal
+        print_table(epoch=0, rows={'test': test_recall})
+        print_table(epoch=0, rows={"test": test_mAPs_group_1})
+        print_table(epoch=0, rows={"test": test_mAPs_group_2})
         best_recall = test_recall
         best_mAPs = test_mAPs
-
     dist.barrier()
 
     for epoch in range(1, config.epochs + 1):
@@ -1083,9 +1094,22 @@ def training_loop_bbox_reg(config: AttrDict):
                     },
                 }
             )
+            
+            ## split mAPs table, too long to print on terminal
+            mAP_keys_group_1 = ["avg_mAP", "mAP@0.50", "mAP@0.75", 
+                                "single_avg_mAP", "single_mAP@0.50", "single_mAP@0.75",
+                                "multi_avg_mAP", "multi_mAP@0.50", "multi_mAP@0.75",]
+            mAP_keys_group_2 = ["short_avg_mAP", "short_mAP@0.50", "short_mAP@0.75",
+                                "medium_avg_mAP", "medium_mAP@0.50", "medium_mAP@0.75",
+                                "long_avg_mAP", "long_mAP@0.50", "long_mAP@0.75"]
+            train_mAPs_group_1 = {key: train_mAPs[key] for key in mAP_keys_group_1}
+            train_mAPs_group_2 = {key: train_mAPs[key] for key in mAP_keys_group_2}
+            test_mAPs_group_1 = {key: test_mAPs[key] for key in mAP_keys_group_1}
+            test_mAPs_group_2 = {key: test_mAPs[key] for key in mAP_keys_group_2}            
             # print to terminal
             print_table(epoch, {"train": train_recall, "test": test_recall})
-            print_table(epoch, {"train": train_mAPs, "test": test_mAPs})
+            print_table(epoch, {"train": train_mAPs_group_1, "test": test_mAPs_group_1})
+            print_table(epoch, {"train": train_mAPs_group_2, "test": test_mAPs_group_2})
 
             state = {
                 "model": model_local.state_dict(),
