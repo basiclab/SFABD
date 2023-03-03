@@ -1,6 +1,10 @@
 from typing import List, Union, Tuple, Dict
 
 import matplotlib.pyplot as plt
+## most GUI based backends require being run on main thread, which is 
+## not always the case in multi-gpu training
+## so switch to backends that don't use GUI 
+plt.switch_backend('agg')
 import seaborn as sns
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
