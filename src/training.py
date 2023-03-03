@@ -899,7 +899,7 @@ def train_epoch_bbox_reg(
         pbar.set_postfix_str(", ".join([
             f"loss: {loss.item():.2f}",
             f"conf: {loss_conf.item():.2f}",
-            f"bbox_reg: {loss_bbox_reg.item():.2f}"
+            f"bbox_reg: {loss_bbox_reg.item():.2f}",
             "[inter]",
             f"video: {loss_inter_video.item():.2f}",
             f"query: {loss_inter_query.item():.2f}",
