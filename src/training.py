@@ -706,13 +706,15 @@ def test_epoch_bbox_reg(
         bbox_offset_1ds = bbox_offset_1ds.permute(0, 2, 1)                  # [S, P, 2]
         out_moments = out_moments + bbox_offset_1ds.sigmoid()               # [S, P, 2]
         
+        '''
         ## remove invalid box after offset (end <= start)
         valid_mask = (out_moments[:, :, 1] - out_moments[:, :, 0]) > 0      # [S, P]
         out_moments = out_moments.masked_select(valid_mask.unsqueeze(-1)).view(S, -1, 2)   # [S, P', 2]
         out_scores1ds = out_scores1ds.masked_select(valid_mask).view(S, -1) # [S, P']
+        '''
         
         ## clamp start and end
-        out_moments = torch.clamp(out_moments, min=0, max=1)                # [S, P', 2]
+        out_moments = torch.clamp(out_moments, min=0, max=1)                # [S, P, 2]
         
         pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
         pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
