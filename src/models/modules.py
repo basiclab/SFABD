@@ -310,14 +310,20 @@ class BboxRegression(nn.Module):
         in_channel: int,        # dim of embedding space
     ):
         super().__init__()
-        self.offset_predictor = nn.Conv2d(in_channel, 2, 1)
+        self.offset_predictor = nn.Conv2d(in_channel*2, 2, 1)
 
     def forward(
         self, 
-        video_feats,  ## [B, C, N, N] 
+        video_feats,  ## [S, C, N, N] 
         sent_feats,   ## [S, C]
     ):
-        offset = self.offset_predictor(video_feats) ## [B, 2, N, N],  delta_s and delta_e
+        N = video_feats.shape[-1]
+        S, C = sent_feats.shape
+        sent_feats = sent_feats.view(S, C, 1, 1)        ## [S, C, 1, 1]
+        sent_feats = sent_feats.expand(-1, -1, N, N)    ## [S, C, N, N]
+        ## channel-wise concat
+        concated_feats = torch.cat([video_feats, sent_feats], dim=1)  ## [S, C+C, N, N] 
+        offset = self.offset_predictor(concated_feats)     ## [S, 2, N, N],  delta_s and delta_e
         
         return offset
 
