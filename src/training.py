@@ -232,7 +232,7 @@ def test_epoch(
     model.eval()
     pred_moments = []
     true_moments = []
-    sim_dict = defaultdict(list)
+    #sim_dict = defaultdict(list)
     ## sample idx count
     sample_idx_count = 0
     for batch, _ in tqdm(loader, ncols=0, leave=False, desc="Inferencing"):
@@ -274,7 +274,7 @@ def test_epoch(
             nms_moments = pred_moments_batch["out_moments"][shift_pred: shift_pred + num_proposals] ## [num_props, 2]
             nms_moments = (nms_moments * config.num_clips).round().long()   # Pred
 
-            if sample_idx_count % 50 == 0 and epoch > 0:
+            if sample_idx_count % 200 == 0 and epoch > 0:
                 plot_path = os.path.join(result_path, f"sample_{sample_idx_count}_epoch_{epoch}.jpg")
                 plot_moments_on_iou2d(
                      gt_iou2d, scores2d, moments, nms_moments, plot_path, mask2d.cpu())
@@ -283,7 +283,7 @@ def test_epoch(
             shift_pred = shift_pred + num_proposals
             sample_idx_count += 1
 
-
+        '''
         ## record topk similarity score
         (
             inter_topk_sim, 
@@ -317,10 +317,12 @@ def test_epoch(
         ## intra
         sim_dict['topk_sim/intra'].append(intra_topk_sim)
         sim_dict['neg_sim/intra'].append(intra_neg_sim)
+        '''
+        
+    #sim_dict = {key: torch.cat(value).mean() for key, value in sim_dict.items()}
 
-    sim_dict = {key: torch.cat(value).mean() for key, value in sim_dict.items()}
-
-    return pred_moments, true_moments, sim_dict
+    #return pred_moments, true_moments, sim_dict
+    return pred_moments, true_moments
 
 
 def train_epoch(
@@ -344,7 +346,7 @@ def train_epoch(
     losses = defaultdict(list)
     pred_moments = []
     true_moments = []
-    sim_dict = defaultdict(list)
+    #sim_dict = defaultdict(list)
     for batch, _ in pbar:
         batch = {key: value.to(device) for key, value in batch.items()}
         iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips)
@@ -412,8 +414,9 @@ def train_epoch(
         losses['loss/inter_video'].append(loss_inter_video.cpu())
         losses['loss/inter_query'].append(loss_inter_query.cpu())
         losses['loss/intra_video'].append(loss_intra_video.cpu())
-
-         ## record topk similarity score
+        
+        '''
+        ## record topk similarity score
         (
             inter_topk_sim, 
             inter_topk_sim_single, 
@@ -446,7 +449,8 @@ def train_epoch(
         ## intra
         sim_dict['topk_sim/intra'].append(intra_topk_sim)
         sim_dict['neg_sim/intra'].append(intra_neg_sim)
-
+        '''
+        
         # update progress bar
         pbar.set_postfix_str(", ".join([
             f"loss: {loss.item():.2f}",
@@ -460,9 +464,10 @@ def train_epoch(
     pbar.close()
 
     losses = {key: torch.stack(value).mean() for key, value in losses.items()}
-    sim_dict = {key: torch.cat(value).mean() for key, value in sim_dict.items()}
+    #sim_dict = {key: torch.cat(value).mean() for key, value in sim_dict.items()}
 
-    return pred_moments, true_moments, losses, sim_dict
+    #return pred_moments, true_moments, losses, sim_dict
+    return pred_moments, true_moments, losses
 
 
 def training_loop(config: AttrDict):
@@ -538,12 +543,23 @@ def training_loop(config: AttrDict):
     # scheduler
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, config.milestones, config.step_gamma)
 
+    ## mAP metric groups
+    mAP_keys_group_1 = ["avg_mAP", "mAP@0.50", "mAP@0.75", 
+                        "single_avg_mAP", "single_mAP@0.50", "single_mAP@0.75",
+                        "multi_avg_mAP", "multi_mAP@0.50", "multi_mAP@0.75",]
+    mAP_keys_group_2 = ["short_avg_mAP", "short_mAP@0.50", "short_mAP@0.75",
+                        "medium_avg_mAP", "medium_mAP@0.50", "medium_mAP@0.75",
+                        "long_avg_mAP", "long_mAP@0.50", "long_mAP@0.75"]
+
     # evaluate test set before training to get initial recall
-    ## create result_plot folder
-    os.makedirs(config.logdir, exist_ok=False)
+    #os.makedirs(config.logdir, exist_ok=False)
+    os.makedirs(config.logdir, exist_ok=True)
     result_path = os.path.join(config.logdir, config.result_plot_path)
-    os.makedirs(result_path, exist_ok=False)
-    test_pred_moments, test_true_moments, test_sim = test_epoch(model, test_loader, 0, config)
+    #os.makedirs(result_path, exist_ok=False)
+    os.makedirs(result_path, exist_ok=True)
+
+    test_pred_moments, test_true_moments = test_epoch(model, test_loader, 0, config)
+
     if dist.is_main():
         json.dump(
             config,
@@ -559,17 +575,22 @@ def training_loop(config: AttrDict):
             test_writer.add_scalar(f'recall/{name}', value, 0)
         for name, value in test_mAPs.items():
             test_writer.add_scalar(f'mAP/{name}', value, 0)
-        print_table(epoch=0, rows={'test': test_recall})
-        print_table(epoch=0, rows={'test': test_mAPs})
 
+        ## split mAPs table, too long to print on terminal
+        test_mAPs_group_1 = {key: test_mAPs[key] for key in mAP_keys_group_1}
+        test_mAPs_group_2 = {key: test_mAPs[key] for key in mAP_keys_group_2}
+        # print to terminal
+        print_table(epoch=0, rows={'test': test_recall})
+        print_table(epoch=0, rows={"test": test_mAPs_group_1})
+        print_table(epoch=0, rows={"test": test_mAPs_group_2})
         best_recall = test_recall
         best_mAPs = test_mAPs
-
+        '''
         ## record topk_sim
         for name, value in test_sim.items():
             test_writer.add_scalar(name, value, 0)
         print_table(epoch=0, rows={'test': test_sim})
-
+        '''
     dist.barrier()
 
     for epoch in range(1, config.epochs + 1):
@@ -582,10 +603,10 @@ def training_loop(config: AttrDict):
             model = SyncBatchNorm.convert_sync_batchnorm(model_local)
             model = DistributedDataParallel(model, device_ids=[device])
 
-        train_pred_moments, train_true_moments, train_losses, train_sim = train_epoch(
+        train_pred_moments, train_true_moments, train_losses = train_epoch(
             model, train_loader, optimizer, loss_iou_fn, loss_con_fn, epoch,
             config)
-        test_pred_moments, test_true_moments, test_sim = test_epoch(
+        test_pred_moments, test_true_moments = test_epoch(
             model, test_loader, epoch, config)
         scheduler.step()
 
@@ -598,11 +619,12 @@ def training_loop(config: AttrDict):
             for name, value in train_losses.items():
                 train_writer.add_scalar(name, value, epoch)
             
+            # evaluate train set
+            '''
             ## record topk_sim
             for name, value in train_sim.items():
                 train_writer.add_scalar(name, value, epoch)
-
-            # evaluate train set
+            '''
             train_recall = calculate_recall(
                 train_pred_moments, train_true_moments,
                 config.recall_Ns, config.recall_IoUs)
@@ -613,10 +635,11 @@ def training_loop(config: AttrDict):
                 train_writer.add_scalar(f'mAP/{name}', value, epoch)
 
             # evaluate test set
+            '''
             ## record topk_sim
             for name, value in test_sim.items():
                 test_writer.add_scalar(name, value, epoch)
-
+            '''
             test_recall = calculate_recall(
                 test_pred_moments, test_true_moments,
                 config.recall_Ns, config.recall_IoUs)
@@ -642,10 +665,18 @@ def training_loop(config: AttrDict):
                     },
                 }
             )
+
+            ## split mAPs table, too long to print on terminal
+            train_mAPs_group_1 = {key: train_mAPs[key] for key in mAP_keys_group_1}
+            train_mAPs_group_2 = {key: train_mAPs[key] for key in mAP_keys_group_2}
+            test_mAPs_group_1 = {key: test_mAPs[key] for key in mAP_keys_group_1}
+            test_mAPs_group_2 = {key: test_mAPs[key] for key in mAP_keys_group_2}
+            
             # print to terminal
             print_table(epoch, {"train": train_recall, "test": test_recall})
-            print_table(epoch, {"train": train_mAPs, "test": test_mAPs})
-            print_table(epoch, {"train": train_sim, "test": test_sim})
+            print_table(epoch, {"train": train_mAPs_group_1, "test": test_mAPs_group_1})
+            print_table(epoch, {"train": train_mAPs_group_2, "test": test_mAPs_group_2})
+            #print_table(epoch, {"train": train_sim, "test": test_sim})
 
             state = {
                 "model": model_local.state_dict(),
@@ -705,14 +736,12 @@ def test_epoch_bbox_reg(
         bbox_offset_1ds = bbox_offset.masked_select(mask2d).view(S, 2, -1)  # [S, 2, P]
         bbox_offset_1ds = bbox_offset_1ds.permute(0, 2, 1)                  # [S, P, 2]
         out_moments = out_moments + bbox_offset_1ds.sigmoid()               # [S, P, 2]
-        
         '''
         ## remove invalid box after offset (end <= start)
         valid_mask = (out_moments[:, :, 1] - out_moments[:, :, 0]) > 0      # [S, P]
         out_moments = out_moments.masked_select(valid_mask.unsqueeze(-1)).view(S, -1, 2)   # [S, P', 2]
         out_scores1ds = out_scores1ds.masked_select(valid_mask).view(S, -1) # [S, P']
         '''
-        
         ## clamp start and end
         out_moments = torch.clamp(out_moments, min=0, max=1)                # [S, P, 2]
         
@@ -892,6 +921,7 @@ def train_epoch_bbox_reg(
         # save loss to tensorboard
         losses['loss/total'].append(loss.cpu())
         losses['loss/conf'].append(loss_conf.cpu())
+        losses['loss/bbox_reg'].append(loss_bbox_reg.cpu())
         losses['loss/contrastive'].append(loss_contrastive.cpu())
         losses['loss/inter_video'].append(loss_inter_video.cpu())
         losses['loss/inter_query'].append(loss_inter_query.cpu())
@@ -991,13 +1021,26 @@ def training_loop_bbox_reg(config: AttrDict):
     # scheduler
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, config.milestones, config.step_gamma)
 
+    ## mAP metric groups
+    mAP_keys_group_1 = ["avg_mAP", "mAP@0.50", "mAP@0.75", 
+                        "single_avg_mAP", "single_mAP@0.50", "single_mAP@0.75",
+                        "multi_avg_mAP", "multi_mAP@0.50", "multi_mAP@0.75",]
+    mAP_keys_group_2 = ["short_avg_mAP", "short_mAP@0.50", "short_mAP@0.75",
+                        "medium_avg_mAP", "medium_mAP@0.50", "medium_mAP@0.75",
+                        "long_avg_mAP", "long_mAP@0.50", "long_mAP@0.75"]
+    
     ## create result_plot folder
-    os.makedirs(config.logdir, exist_ok=False)
+    #os.makedirs(config.logdir, exist_ok=False)
+    os.makedirs(config.logdir, exist_ok=True)
     result_path = os.path.join(config.logdir, config.result_plot_path)
-    os.makedirs(result_path, exist_ok=False)
+    #os.makedirs(result_path, exist_ok=False)
+    os.makedirs(result_path, exist_ok=True)
     test_pred_moments, test_true_moments = test_epoch_bbox_reg(
                                                 model, test_loader, 0, config
                                             )
+    
+
+
     # evaluate test set before training to get initial recall
     if dist.is_main():
         json.dump(
@@ -1016,12 +1059,6 @@ def training_loop_bbox_reg(config: AttrDict):
             test_writer.add_scalar(f'mAP/{name}', value, 0)
 
         ## split mAPs table, too long to print on terminal
-        mAP_keys_group_1 = ["avg_mAP", "mAP@0.50", "mAP@0.75", 
-                            "single_avg_mAP", "single_mAP@0.50", "single_mAP@0.75",
-                            "multi_avg_mAP", "multi_mAP@0.50", "multi_mAP@0.75",]
-        mAP_keys_group_2 = ["short_avg_mAP", "short_mAP@0.50", "short_mAP@0.75",
-                            "medium_avg_mAP", "medium_mAP@0.50", "medium_mAP@0.75",
-                            "long_avg_mAP", "long_mAP@0.50", "long_mAP@0.75"]
         test_mAPs_group_1 = {key: test_mAPs[key] for key in mAP_keys_group_1}
         test_mAPs_group_2 = {key: test_mAPs[key] for key in mAP_keys_group_2}
         
@@ -1031,6 +1068,7 @@ def training_loop_bbox_reg(config: AttrDict):
         print_table(epoch=0, rows={"test": test_mAPs_group_2})
         best_recall = test_recall
         best_mAPs = test_mAPs
+
     dist.barrier()
 
     for epoch in range(1, config.epochs + 1):
@@ -1098,20 +1136,16 @@ def training_loop_bbox_reg(config: AttrDict):
             )
             
             ## split mAPs table, too long to print on terminal
-            mAP_keys_group_1 = ["avg_mAP", "mAP@0.50", "mAP@0.75", 
-                                "single_avg_mAP", "single_mAP@0.50", "single_mAP@0.75",
-                                "multi_avg_mAP", "multi_mAP@0.50", "multi_mAP@0.75",]
-            mAP_keys_group_2 = ["short_avg_mAP", "short_mAP@0.50", "short_mAP@0.75",
-                                "medium_avg_mAP", "medium_mAP@0.50", "medium_mAP@0.75",
-                                "long_avg_mAP", "long_mAP@0.50", "long_mAP@0.75"]
             train_mAPs_group_1 = {key: train_mAPs[key] for key in mAP_keys_group_1}
             train_mAPs_group_2 = {key: train_mAPs[key] for key in mAP_keys_group_2}
             test_mAPs_group_1 = {key: test_mAPs[key] for key in mAP_keys_group_1}
-            test_mAPs_group_2 = {key: test_mAPs[key] for key in mAP_keys_group_2}            
+            test_mAPs_group_2 = {key: test_mAPs[key] for key in mAP_keys_group_2}
+            
             # print to terminal
             print_table(epoch, {"train": train_recall, "test": test_recall})
             print_table(epoch, {"train": train_mAPs_group_1, "test": test_mAPs_group_1})
             print_table(epoch, {"train": train_mAPs_group_2, "test": test_mAPs_group_2})
+
 
             state = {
                 "model": model_local.state_dict(),
@@ -1142,6 +1176,7 @@ def training_loop_bbox_reg(config: AttrDict):
     if dist.is_main():
         train_writer.close()
         test_writer.close()
+
 
 
 
