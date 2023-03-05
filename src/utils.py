@@ -24,6 +24,24 @@ def iou(
     union = torch.maximum(ed1, ed2) - torch.minimum(st1, st2)   # [N, M]
     return inter.clamp(min=0) / union                           # [N, M]
 
+def rescaled_iou(
+    target_moments: torch.Tensor,                               # [B, 2]
+    proposal_moments: torch.Tensor,                             # [P, 2]
+    num_clips: int,                                     
+) -> torch.Tensor:                                              # [B, P]
+    st1 = target_moments[:, 0:1]                                # [B, 1]
+    ed1 = target_moments[:, 1:2]                                # [B, 1]
+    st2 = proposal_moments[:, 0:1].t()                          # [1, P]
+    ed2 = proposal_moments[:, 1:2].t()                          # [1, P]
+    inter = torch.minimum(ed1, ed2) - torch.maximum(st1, st2)   # [B, P]
+    union = torch.maximum(ed1, ed2) - torch.minimum(st1, st2)   # [B, P]
+    ## normalized target len (x% of video_len) * num_grids
+    ## how many grids is this target
+    target_len = (ed1 - st1) * num_clips                        # [B, 1]
+    rescale_factor = torch.exp(-target_len + 1.5) + 1           # [B, 1]
+    iou = inter.clamp(min=0) / union                            # [B, P]
+    rescaled_iou = rescale_factor * iou                         # [B, P] 
+    return rescaled_iou                                         # [B, P]
 
 def batch_iou(
     moments1: torch.Tensor,                                     # [B, N, 2]
@@ -131,6 +149,23 @@ def moments_to_iou2ds(
     iou2d = iou(target_moment, moments)                                 # [B, P]
     iou2d = iou2d.view(B, num_clips, num_clips)                         # [B, N, N]
     assert (iou2d >= 0).all() and (iou2d <= 1).all()
+    return iou2d
+
+def moments_to_rescaled_iou2ds(
+    target_moment: torch.Tensor,                                        # [B, 2]
+    num_clips: int,                                                     # N = num_clips
+) -> torch.Tensor:                                                      # [B, N, N]
+    """ Convert batch moment to iou2d."""
+    B, _ = target_moment.shape
+    moments = target_moment.new_ones(num_clips, num_clips).nonzero()    # [P, 2]
+    moments[:, 1] += 1                                                  # [P, 2]
+    moments = moments / num_clips                                       # [P, 2]
+    ## target_moment: [B, 2],   moments: [P, 2]  -> [B, P]  
+    iou2d = rescaled_iou(target_moment, moments, num_clips)             # [B, P]
+    iou2d = iou2d.view(B, num_clips, num_clips)                         # [B, N, N]
+    ## the rescaled IoU may exceed 1
+    iou2d = iou2d.clamp(0, 1)
+    #assert (iou2d >= 0).all() and (iou2d <= 1).all()
     return iou2d
 
 ## separate to combined
