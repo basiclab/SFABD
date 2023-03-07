@@ -32,6 +32,54 @@ class ScaledIoULoss(nn.Module):
         iou1d = self.linear_scale(iou1d)                        # [S, P]
         loss = F.binary_cross_entropy_with_logits(logits1d, iou1d)
         return loss
+    
+class ScaledIoUFocalLoss(nn.Module):
+    def __init__(
+        self, 
+        min_iou: float, 
+        max_iou: float, 
+        scale: float,
+        alpha: float,
+        gamma: float,
+    ):
+        super().__init__()
+        self.min_iou = min_iou
+        self.max_iou = max_iou
+        self.scale = scale
+        self.alpha = alpha
+        self.gamma = gamma
+
+    def linear_scale(self, iou: torch.Tensor):
+        return iou.sub(self.min_iou).div(self.max_iou - self.min_iou).clamp(0, 1)
+
+    def forward(
+        self,
+        logits2d: torch.Tensor,     # [S, N, N]
+        iou2d: torch.Tensor,        # [S, N, N]
+        mask2d: torch.Tensor,       # [N, N]
+    ):
+        """
+            B: (B)atch size
+            N: (N)um clips
+            S: number of (S)entences
+            P: number of (P)roposals = number of 1 in mask2d
+        """
+        S, _, _ = logits2d.shape
+        assert logits2d.shape == iou2d.shape, f"{logits2d.shape} != {iou2d.shape}"
+        logits1d = logits2d.masked_select(mask2d).view(S, -1)   # [S, P]
+        scores1d = torch.sigmoid(logits1d * self.scale)         # [S, P]
+        iou1d = iou2d.masked_select(mask2d).view(S, -1)         # [S, P]
+        iou1d = self.linear_scale(iou1d)                        # [S, P]
+        
+        ## focal loss
+        ## - (y * a * (1-p)^r * log(p) + (1-y) * (1-a) * p^r * log(1-p))
+        y = iou1d
+        p = scores1d
+        loss = - (y * self.alpha * torch.pow((1-p), self.gamma) * torch.log(p)  
+                + (1-y) * (1-self.alpha) * torch.pow(p, self.gamma) * torch.log(1-p))   ## [S, P]
+        loss = loss.mean()
+        
+        return loss
 
 ## fore/background binary classification
 class ConfidenceLoss(nn.Module):
@@ -322,9 +370,35 @@ class ContrastiveLoss(nn.Module):
             ## don't choose the lower-left corner as negative samples
             s2v_neg_mask = torch.logical_and(s2v_neg_mask, lower_left_mask)         # [S, P]
             inter_query_neg_mask[backup_pos_mask.unsqueeze(1)] = s2v_neg_mask.view(-1)
-            '''
             
 
+            ## build lower-left mask [S, N, N]
+            lower_left_mask = torch.ones(S, N, N, device=device)
+            target_count = 0
+            for idx, num_target in enumerate(num_targets):  # [S]
+                for i in range(num_target):
+                    start, end = top1_position_on_map[target_count + i]
+                    gt_len = end + 1 - start
+                    for s in range(start, end+1):
+                        for e in range(start, end+1):
+                            ## proposals that has len < xx% of gt_len are still
+                            ## neg samples
+                            if s <= e and (e+1-s) > int(gt_len*0.0):
+                                ## lower-left corner set to 0
+                                lower_left_mask[idx, s, e] = 0
+                    
+                target_count += num_target
+
+            ## lower-left: 0, others: 1
+            lower_left_mask = lower_left_mask.masked_select(mask2d).view(S, -1)     # [S, P]
+            s2v_neg_mask = ~s2v_pos_mask                                            # [S, P]
+            ## for plotting
+            original_s2v_neg_mask = s2v_neg_mask.clone()
+            ## don't choose the lower-left corner as negative samples
+            s2v_neg_mask = torch.logical_and(s2v_neg_mask, lower_left_mask)         # [S, P]
+            inter_query_neg_mask[backup_pos_mask.unsqueeze(1)] = s2v_neg_mask.view(-1)
+            '''
+            
             loss_inter_query = self.log_cross_entropy(
                 inter_query_pos,                                    # [M, K]
                 inter_query_all[scatter_m2s],                       # [M, 1, B * P]
@@ -407,7 +481,7 @@ class ContrastiveLoss(nn.Module):
             loss_intra_video = torch.tensor(0., device=device)
         '''
          
-        #### Compute whole batch (testing now)
+        #### Compute whole batch 
         if self.intra:
             # === intra video
             shift = 0
@@ -756,7 +830,7 @@ if __name__ == '__main__':
     mask2d = (torch.rand(N, N) > 0.5).triu().bool()
 
     ## test ContrastiveLoss
-    
+    '''
     loss_fn = ContrastiveLoss(pos_topk=1, intra=True)
     (
         loss_inter_video,
@@ -776,15 +850,27 @@ if __name__ == '__main__':
         loss_inter_query,
         loss_intra_video,
     )
-    
+    '''
+
+    ## test ScaledIoUFocalLoss
+    loss_fn = ScaledIoUFocalLoss(
+                    min_iou=0.5, 
+                    max_iou=1.0, 
+                    scale=10,
+                    alpha=0.25,
+                    gamma=2
+                )
+    scores2d = torch.rand(S, N, N)
+    iou2d = torch.rand(S, N, N)
+    loss = loss_fn(scores2d, iou2d, mask2d)
+    print(f"Focal loss:{loss.item()}")
 
     ## test iou loss
-    '''
     loss_fn = ScaledIoULoss(min_iou=0.1, max_iou=1)
-    scores2d = torch.rand(B, N, N)
-    iou2d = torch.rand(B, N, N)
+    #scores2d = torch.rand(B, N, N)
+    #iou2d = torch.rand(B, N, N)
     loss = loss_fn(scores2d, iou2d, mask2d)
-    '''
+    print(f"BCE loss:{loss.item()}")
 
     '''
     ## test ProbEmbedContrastiveLoss

@@ -38,7 +38,7 @@ def rescaled_iou(
     ## normalized target len (x% of video_len) * num_grids
     ## how many grids is this target
     target_len = (ed1 - st1) * num_clips                        # [B, 1]
-    rescale_factor = torch.exp(-target_len + 1.5) + 1           # [B, 1]
+    rescale_factor = torch.exp(-target_len + 0.5) + 1           # [B, 1]
     iou = inter.clamp(min=0) / union                            # [B, P]
     rescaled_iou = rescale_factor * iou                         # [B, P] 
     return rescaled_iou                                         # [B, P]
@@ -146,9 +146,27 @@ def moments_to_iou2ds(
     moments = target_moment.new_ones(num_clips, num_clips).nonzero()    # [P, 2]
     moments[:, 1] += 1                                                  # [P, 2]
     moments = moments / num_clips                                       # [P, 2]
+    ## target_moment: [B, 2],   moments: [P, 2]  -> [B, P]  
     iou2d = iou(target_moment, moments)                                 # [B, P]
     iou2d = iou2d.view(B, num_clips, num_clips)                         # [B, N, N]
     assert (iou2d >= 0).all() and (iou2d <= 1).all()
+    return iou2d
+
+def moments_to_rescaled_iou2ds(
+    target_moment: torch.Tensor,                                        # [B, 2]
+    num_clips: int,                                                     # N = num_clips
+) -> torch.Tensor:                                                      # [B, N, N]
+    """ Convert batch moment to iou2d."""
+    B, _ = target_moment.shape
+    moments = target_moment.new_ones(num_clips, num_clips).nonzero()    # [P, 2]
+    moments[:, 1] += 1                                                  # [P, 2]
+    moments = moments / num_clips                                       # [P, 2]
+    ## target_moment: [B, 2],   moments: [P, 2]  -> [B, P]  
+    iou2d = rescaled_iou(target_moment, moments, num_clips)             # [B, P]
+    iou2d = iou2d.view(B, num_clips, num_clips)                         # [B, N, N]
+    ## the rescaled IoU may exceed 1
+    iou2d = iou2d.clamp(0, 1)
+    #assert (iou2d >= 0).all() and (iou2d <= 1).all()
     return iou2d
 
 def moments_to_rescaled_iou2ds(
@@ -288,6 +306,42 @@ def plot_moments_on_iou2d(
 
 
 @torch.no_grad()
+def plot_iou2d_and_rescaled_iou2d(
+    iou2d: torch.Tensor,            ## [N, N]
+    rescaled_iou2d: torch.Tensor,   ## [N, N]
+    path: str,
+):
+    _, N = iou2d.shape  # N: num_clips
+
+    fig, axs = plt.subplots(1, 2, figsize=(10, 5.5))
+    offset = torch.ones(N, N).triu()*0.05 ## for better visualization
+    #cm = plt.cm.get_cmap('Reds')
+    cm = matplotlib.colormaps.get_cmap('Reds')
+
+    ## plot gt 2d map
+    iou2d = iou2d.sub(0.5).div(1.0 - 0.5).clamp(0, 1)   ## re-scale iou2d
+    iou_plot = axs[0].imshow(iou2d+offset, cmap=cm, vmin=0.0, vmax=1.0)
+    axs[0].set(xlabel='end index', ylabel='start index')
+    axs[0].set_title(f"iou2d")     
+    divider = make_axes_locatable(axs[0])
+    cax = divider.append_axes("right", size="5%", pad=0.1)
+    plt.colorbar(iou_plot, cax=cax)
+
+    ## plot rescaled 2d map
+    rescaled_iou2d = rescaled_iou2d.sub(0.5).div(1.0 - 0.5).clamp(0, 1)   ## re-scale iou2d
+    rescaled_iou_plot = axs[1].imshow(rescaled_iou2d+offset, cmap=cm, vmin=0.0, vmax=1.0)
+    axs[1].set(xlabel='end index', ylabel='start index')
+    axs[1].set_title(f"rescaled iou2d")     
+    divider = make_axes_locatable(axs[1])
+    cax = divider.append_axes("right", size="5%", pad=0.1)
+    plt.colorbar(rescaled_iou_plot, cax=cax)
+   
+    fig.tight_layout()
+    #plt.show()
+    fig.savefig(path, bbox_inches='tight')
+    plt.close(fig)
+
+@torch.no_grad()
 def plot_mask_and_gt(
     iou2d: torch.Tensor,        ## [N, N]
     mask2d: torch.Tensor,       ## [N, N]
@@ -322,7 +376,6 @@ def plot_mask_and_gt(
     plt.close(fig)
 
 
-
 def l2_normalize(tensor, axis=-1):
     """L2-normalize columns of tensor"""
     return F.normalize(tensor, p=2, dim=axis)
@@ -343,16 +396,42 @@ def sample_gaussian_tensors(
 
 
 if __name__ == '__main__':
+    import matplotlib
     torch.set_printoptions(linewidth=200)
 
-    num_clips = 16
+    num_clips = 64
+    num_targets = torch.tensor([3, 4])
+    #moments = torch.rand(num_targets.sum(), 2).sort(dim=1).values
+    moments = torch.Tensor([[0.1, 0.11],
+                            [0.27, 0.3],
+                            [0.5, 0.9],
+                            [0.5, 0.52],
+                            [0.6, 0.63],
+                            [0.9, 0.92],
+                            [0.3, 0.45],]) 
+    iou2ds = moments_to_iou2ds(moments, num_clips)
+    rescaled_iou2ds = moments_to_rescaled_iou2ds(moments, num_clips)
+    
+    iou2d = iou2ds_to_iou2d(iou2ds, num_targets)
+    rescaled_iou2d = iou2ds_to_iou2d(rescaled_iou2ds, num_targets)
 
+    #for i, (iou2ds_i, rescaled_iou2ds_i) in enumerate(zip(iou2ds, rescaled_iou2ds)):
+    #    plot_iou2d_and_rescaled_iou2d(iou2ds_i, rescaled_iou2ds_i, f'./{i}.jpg')
+
+    for i, (iou2d_i, rescaled_iou2d_i) in enumerate(zip(iou2d, rescaled_iou2d)):
+        plot_iou2d_and_rescaled_iou2d(iou2d_i, rescaled_iou2d_i, f'./{i}.jpg')
+
+
+    '''
     # test moments_to_iou2ds
     for _ in range(10):
         num_targets = torch.tensor([1, 2, 3, 4])
         moments = torch.rand(num_targets.sum(), 2).sort(dim=1).values
         iou2ds = moments_to_iou2ds(moments, num_clips)
+        rescaled_iou2ds = moments_to_rescaled_iou2ds(moments, num_clips)
+
         iou2d = iou2ds_to_iou2d(iou2ds, num_targets)
+        rescaled_iou2d = iou2ds_to_iou2d(rescaled_iou2ds, num_targets)
 
         assert torch.allclose(iou2d[0], iou2ds[0])
         assert torch.allclose(iou2d[1], iou2ds[1:3].max(dim=0).values)
@@ -365,3 +444,4 @@ if __name__ == '__main__':
         mask2d = (torch.rand(num_clips, num_clips) > 0.5).triu()
         out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
         pred_moments2 = nms(out_moments, out_scores1ds, threshold=0.3)
+    '''

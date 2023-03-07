@@ -1,5 +1,8 @@
+.vscode
+
 __pycache__
 .python-version
+env
 
 build
 dist
@@ -7,6 +10,6 @@ dist
 *.c
 
 data
-predictions
 
 logs
+*.jpg

@@ -35,13 +35,10 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--num_samples', default=7)
 @click.option('--kl/--no-kl', default=True) ## kl constraint
 
-# iou loss
+# confidence loss
 @click.option('--min_iou', default=0.5)
 @click.option('--max_iou', default=1.0)
 @click.option('--iou_weight', default=1.0)
-
-# confidence loss
-@click.option('--confidence_weight', default=1.0)
 @click.option('--iou_threshold', default=0.75)
 
 # bbox regression loss
@@ -119,8 +116,8 @@ def subprocess(rank, world_size, temp_dir, config):
         testing_loop(config)
     else:
         # training
-        #training_loop(config)
-        training_loop_bbox_reg(config)
+        training_loop(config)
+        #training_loop_bbox_reg(config)
         #training_loop_PE(config)
 
 

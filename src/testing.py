@@ -14,7 +14,7 @@ import src.dist as dist
 from src.evaluation import calculate_recall, calculate_mAPs, recall_name
 from src.misc import print_table, construct_class
 from src.models.model import MMN, MMN_PE
-from src.utils import nms, scores2ds_to_moments, plot_moments_on_iou2d
+from src.utils import nms, scores2ds_to_moments
 
 
 def testing_loop(config):
@@ -170,14 +170,6 @@ def testing_loop(config):
         for line in pred_submission:
             f.write(line + '\n')
 
-    '''
-    recall = calculate_recall(
-        pred_moments, true_moments, config.recall_Ns, config.recall_IoUs)
-    mAPs = calculate_mAPs(pred_moments, true_moments)
-
-    print_table(epoch=0, rows={'test': recall})
-    print_table(epoch=0, rows={'test': mAPs})
-    '''
 
     with ZipFile(os.path.join(config.logdir, 'submission.zip'), 'w') as zip_obj:
         val_submission_path = os.path.join(config.logdir, 'hl_val_submission.jsonl')

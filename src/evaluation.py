@@ -132,7 +132,6 @@ def calculate_APs_worker(
 
     return APs
 
-
 def calculate_mAPs(
     pred_moments: List[Dict[str, torch.Tensor]],
     true_moments: List[Dict[str, torch.Tensor]],
@@ -161,76 +160,102 @@ def calculate_mAPs(
     shift_p = 0
     shift_t = 0
     for num_p, num_t in zip(num_proposals, num_targets):
+        sample_tgt_moments = tgt_moments[shift_t: shift_t + num_t]
         calc_buffer.append([
-            tgt_moments[shift_t: shift_t + num_t],
+            sample_tgt_moments,
             out_moments[shift_p: shift_p + num_p],
             out_scores1ds[shift_p: shift_p + num_p],
         ])
 
         if num_t == 1: ## single-target
             calc_buffer_single.append([
-                tgt_moments[shift_t: shift_t + num_t],
+                sample_tgt_moments,
                 out_moments[shift_p: shift_p + num_p],
                 out_scores1ds[shift_p: shift_p + num_p],
             ])
     
         else:          ## multi-target
             calc_buffer_multi.append([
-                tgt_moments[shift_t: shift_t + num_t],
+                sample_tgt_moments,
                 out_moments[shift_p: shift_p + num_p],
                 out_scores1ds[shift_p: shift_p + num_p],
             ])
         
         ## short/medium/long
-        for _, target in enumerate(tgt_moments[shift_t: shift_t + num_t]):
-            target_length = target[1] - target[0]
-            if target_length <= 0.15:   ## short clips
-                calc_buffer_short.append([
-                    target.unsqueeze(0),
-                    out_moments[shift_p: shift_p + num_p],
-                    out_scores1ds[shift_p: shift_p + num_p],
-                ])
-            elif target_length > 0.15 and target_length <= 0.5:
-                calc_buffer_medium.append([
-                    target.unsqueeze(0),
-                    out_moments[shift_p: shift_p + num_p],
-                    out_scores1ds[shift_p: shift_p + num_p],
-                ])
-            elif target_length > 0.5:
-                calc_buffer_long.append([
-                    target.unsqueeze(0),
-                    out_moments[shift_p: shift_p + num_p],
-                    out_scores1ds[shift_p: shift_p + num_p],
-                ])
+        tgt_length = sample_tgt_moments[1] - sample_tgt_moments[0]
+        calc_buffer_short.append([
+            sample_tgt_moments[tgt_length.lt(0.15)],
+            out_moments[shift_p: shift_p + num_p],
+            out_scores1ds[shift_p: shift_p + num_p],
+        ])
+        calc_buffer_medium.append([
+            sample_tgt_moments[tgt_length.ge(0.15).lt(0.5)],
+            out_moments[shift_p: shift_p + num_p],
+            out_scores1ds[shift_p: shift_p + num_p],
+        ])
+        calc_buffer_long.append([
+            sample_tgt_moments[tgt_length.ge(0.15)],
+            out_moments[shift_p: shift_p + num_p],
+            out_scores1ds[shift_p: shift_p + num_p],
+        ])
+        
+        # for _, target in enumerate(tgt_moments[shift_t: shift_t + num_t]):
+        #     target_length = target[1] - target[0]
+        #     if target_length <= 0.15:   ## short clips
+        #         calc_buffer_short.append([
+        #             target.unsqueeze(0),
+        #             out_moments[shift_p: shift_p + num_p],
+        #             out_scores1ds[shift_p: shift_p + num_p],
+        #         ])
+        #     elif target_length > 0.15 and target_length <= 0.5:
+        #         calc_buffer_medium.append([
+        #             target.unsqueeze(0),
+        #             out_moments[shift_p: shift_p + num_p],
+        #             out_scores1ds[shift_p: shift_p + num_p],
+        #         ])
+        #     elif target_length > 0.5:
+        #         calc_buffer_long.append([
+        #             target.unsqueeze(0),
+        #             out_moments[shift_p: shift_p + num_p],
+        #             out_scores1ds[shift_p: shift_p + num_p],
+        #         ])
         
         shift_p += num_p
         shift_t += num_t
 
     ## mAP for all data
     APs = []
+    APs_single = []
+    APs_multi = []
     for data in tqdm(calc_buffer, ncols=0, leave=False, desc="mAP",
                      disable=not dist.is_main()):
-        APs.append(calculate_APs_worker(*data, mAP_ious, max_proposals))
+        AP = calculate_APs_worker(*data, mAP_ious, max_proposals)
+        APs.append(AP)
+        if len(data[0]) == 1:
+            APs_single.append(AP)
+        else:
+            APs_multi.append(AP)
+        # APs.append(calculate_APs_worker(*data, mAP_ious, max_proposals))
     mAPs = torch.stack(APs).mean(dim=0)
     results = {}
     for i, mAP_iou in enumerate(mAP_ious):
         results[mAP_name(mAP_iou)] = mAPs[i].item()
 
     ## mAP for single-target
-    APs_single = []
-    for data in tqdm(calc_buffer_single, ncols=0, leave=False, desc="mAP",
-                     disable=not dist.is_main()):
-        APs_single.append(calculate_APs_worker(*data, mAP_ious, max_proposals))
+    # APs_single = []
+    # for data in tqdm(calc_buffer_single, ncols=0, leave=False, desc="mAP",
+    #                  disable=not dist.is_main()):
+    #     APs_single.append(calculate_APs_worker(*data, mAP_ious, max_proposals))
     mAPs_single = torch.stack(APs_single).mean(dim=0)
     results_single = {}
     for i, mAP_iou in enumerate(mAP_ious):
         results_single[mAP_name(mAP_iou)] = mAPs_single[i].item()
 
     ## mAP for multi-targets
-    APs_multi = []
-    for data in tqdm(calc_buffer_multi, ncols=0, leave=False, desc="mAP",
-                     disable=not dist.is_main()):
-        APs_multi.append(calculate_APs_worker(*data, mAP_ious, max_proposals))
+    # APs_multi = []
+    # for data in tqdm(calc_buffer_multi, ncols=0, leave=False, desc="mAP",
+    #                  disable=not dist.is_main()):
+    #     APs_multi.append(calculate_APs_worker(*data, mAP_ious, max_proposals))
     mAPs_multi = torch.stack(APs_multi).mean(dim=0)
     results_multi = {}
     for i, mAP_iou in enumerate(mAP_ious):

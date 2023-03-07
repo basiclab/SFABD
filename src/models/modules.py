@@ -15,7 +15,6 @@ class AggregateVideo(nn.Module):
         video_feats: torch.Tensor,  # [src_num, C]
     ) -> torch.Tensor:              # [tgt_num, C]
         """Aggregate the feature of video into fixed shape."""
-
         src_num, _ = video_feats.shape
         idxs = torch.arange(0, self.tgt_num + 1) / self.tgt_num * src_num
         idxs = idxs.round().long().clamp(max=src_num - 1)
@@ -88,7 +87,6 @@ class SparseMaxPool(nn.Module):
             offset += stride
             stride *= 2
         
-        #x2d = self.proj(x2d)
         return x2d, mask2d
         #return x2d, x2d, mask2d
 
@@ -148,27 +146,31 @@ class SparsePropConv(nn.Module):
                     nn.ReLU(),
                 ) for _ in range(layer_count-1)])            
 
-                '''
-                self.convs.extend([
-                    nn.Sequential(
-                        nn.Conv1d(hidden_size, hidden_size, 3, 2),
-                        nn.BatchNorm1d(hidden_size),
-                        nn.ReLU(),
-                    )
-                ])
+class SparsePropConv(nn.Module):
+    def __init__(self, counts, hidden_size):
+        super().__init__()
+        self.num_scale_layers = counts
+        self.hidden_size = hidden_size
+        # torch.nn.init.normal_(self.proj.weight, std=0.2)
 
-                for count in range(1, layer_count):
-                    if (count % 2) != 0: ## 1, 3, 5 ...
-                        self.convs.extend([nn.MaxPool1d(2, 1)])
-                    else: ## 2, 4, 6 ...
-                        self.convs.extend([
-                            nn.Sequential(
-                                nn.Conv1d(hidden_size, hidden_size, 2, 1),
-                                nn.BatchNorm1d(hidden_size),
-                                nn.ReLU(),
-                            )
-                        ])
-               '''
+        self.convs = nn.ModuleList()
+        for layer_idx, layer_count in enumerate(self.num_scale_layers):
+            ## first layer
+            if layer_idx == 0:
+                self.convs.extend([nn.Sequential(
+                    nn.Conv1d(hidden_size, hidden_size, 2, 1),
+                    nn.BatchNorm1d(hidden_size),
+                    nn.ReLU(),
+                ) for _ in range(layer_count-1)])  
+
+            ## other layers 
+            else: 
+                self.convs.extend([nn.MaxPool1d(3, 2)])
+                self.convs.extend([nn.Sequential(
+                    nn.Conv1d(hidden_size, hidden_size, 2, 1),
+                    nn.BatchNorm1d(hidden_size),
+                    nn.ReLU(),
+                ) for _ in range(layer_count-1)])            
       
     def forward(self, x):
         B, C, N = x.shape
@@ -181,7 +183,6 @@ class SparsePropConv(nn.Module):
         stride, offset = 1, 0
         for level, count in enumerate(self.num_scale_layers): ## (0, 16),  (1, 8), (1, 8)
             for order in range(count):
-                #x = self.convs[accumulate_count](x)
                 if accumulate_count != 0:
                     x = self.convs[accumulate_count-1](x)
                
@@ -194,11 +195,8 @@ class SparsePropConv(nn.Module):
 
             offset += stride
             stride *= 2
-        
-        #x2d = self.proj(x2d)
 
         return x2d, mask2d
-        #return x2d, x2d, mask2d
 
 class ProposalConv(nn.Module):
     def __init__(
@@ -310,7 +308,12 @@ class BboxRegression(nn.Module):
         in_channel: int,        # dim of embedding space
     ):
         super().__init__()
-        self.offset_predictor = nn.Conv2d(in_channel*2, 2, 1)
+        self.offset_predictor = nn.Sequential(
+                                    nn.Conv2d(in_channel*2, in_channel, 1),
+                                    nn.ReLU(),
+                                    nn.Dropout(0.5),
+                                    nn.Conv2d(in_channel, 2, 1),
+                                )
 
     def forward(
         self, 

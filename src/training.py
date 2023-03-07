@@ -19,9 +19,9 @@ from src.losses.main import (
         BboxRegressionLoss, ProbEmbedContrastiveLoss
 )
 from src.misc import AttrDict, set_seed, print_table, construct_class
-from src.models.model import MMN, MMN_PE
+from src.models.model import MMN, MMN_bbox_reg, MMN_PE
 from src.utils import (
-    nms, scores2ds_to_moments, moments_to_iou2ds, 
+    nms, scores2ds_to_moments, moments_to_iou2ds, moments_to_rescaled_iou2ds, 
     iou2ds_to_iou2d, plot_moments_on_iou2d
 )
 
@@ -143,78 +143,60 @@ def compute_topk_sim_score(
         inter_topk_sim_multi = torch.cat(inter_topk_sim_multi)
         inter_neg_sim_multi = torch.cat(inter_neg_sim_multi)
     else:
-        ## topk sim
         inter_topk_sim = torch.zeros(1)
-        ## neg sim
         inter_neg_sim = torch.zeros(1)
             
 
-    #if intra:
-    ## always record intra sim
-    if True:    
-        # === intra video
-        shift = 0
-        combinations = []
-        scatter_e2s = []
-        ## TODO: ignore single_target sample?
-        for i, num in enumerate(num_targets):
-            if num > 1: ## multi-target
-                #pairs = torch.ones(
-                #    num * K, num * K, device=device).nonzero()      # [num * K * num * K, 2]
-                pairs = torch.ones(
-                    num * K, num * K, device=device).fill_diagonal_(0).nonzero()      # [num * K * num * K, 2]
-                
-                combinations.append(pairs + shift)
-                scatter_e2s.append(torch.ones(len(pairs), device=device) * i)
-            shift += num * K
-            '''
-            #pairs = torch.ones(
-            #        num * K, num * K, device=device).fill_diagonal_(0).nonzero()      # [num * K * num * K, 2]
+    ## always record intra sim 
+    shift = 0
+    combinations = []
+    scatter_e2s = []
+    for i, num in enumerate(num_targets):
+        if num > 1: ## multi-target
             pairs = torch.ones(
-                    num * K, num * K, device=device).nonzero()      # [num * K * num * K, 2]
+                num * K, num * K, device=device).fill_diagonal_(0).nonzero()      # [num * K * num * K, 2]
+            
             combinations.append(pairs + shift)
             scatter_e2s.append(torch.ones(len(pairs), device=device) * i)
-            shift += num * K
-            '''
-        # E: number of (E)numerated positive pairs
-        ref_idx, pos_idx = torch.cat(combinations, dim=0).t()   # [E], [E]
-        scatter_e2s = torch.cat(scatter_e2s, dim=0).long()      # [E]  ex.[0, 0, 0, 1, 1, 1...]
-        assert (ref_idx < M * K).all()
-        assert (pos_idx < M * K).all()
-
-        ## intra topk sim
-        pos_video_feats = topk_video_feats.reshape(M * K, C)    # [M * K, C]
-        intra_video_pos = torch.mul(
-            pos_video_feats[ref_idx],                           # [E, C]
-            pos_video_feats[pos_idx],                           # [E, C]
-        ).sum(dim=1)                                            # [E]
-        #intra_topk_sim = torch.sigmoid(
-        #    10 * intra_video_pos).cpu()                         # [E]
-        intra_topk_sim = intra_video_pos.cpu()
-
-        ## intra neg sim
-        intra_video_all = torch.mul(
-                topk_video_feats.unsqueeze(2),                      # [M, K, 1, C]
-                video_feats[scatter_m2v].unsqueeze(1),              # [M, 1, P, C]
-            ).sum(dim=-1).reshape(M * K, -1)                        # [M * K, P]
-        intra_video_all = intra_video_all[ref_idx]                  # [E, P]
-        intra_video_neg_mask = iou2d <= 0.5                         # [S, P]
-        intra_video_neg_mask = intra_video_neg_mask[scatter_e2s]    # [E, P]
-
-        ## mean neg sim for each intra pair
-        #intra_neg_sim = torch.sigmoid(10 * intra_video_all)         # [E, P]
-        ## cos sim [-1, 1]
-        intra_neg_sim = intra_video_all
-        intra_neg_sim = intra_neg_sim.mul(intra_video_neg_mask)     # [E, P]
+        shift += num * K
         
-        sample_neg_num = intra_video_neg_mask.sum(dim=-1).squeeze() # [E] for computing mean
-        intra_neg_sim = intra_neg_sim.sum(dim=-1).squeeze()         # [E]
-        intra_neg_sim = intra_neg_sim.div(
-            sample_neg_num
-        ).cpu()                                                     # [E]
-    else:
-        intra_topk_sim = torch.zeros(1)
-        intra_neg_sim = torch.zeros(1)
+    # E: number of (E)numerated positive pairs
+    ref_idx, pos_idx = torch.cat(combinations, dim=0).t()   # [E], [E]
+    scatter_e2s = torch.cat(scatter_e2s, dim=0).long()      # [E]  ex.[0, 0, 0, 1, 1, 1...]
+    assert (ref_idx < M * K).all()
+    assert (pos_idx < M * K).all()
+
+    ## intra topk sim
+    pos_video_feats = topk_video_feats.reshape(M * K, C)    # [M * K, C]
+    intra_video_pos = torch.mul(
+        pos_video_feats[ref_idx],                           # [E, C]
+        pos_video_feats[pos_idx],                           # [E, C]
+    ).sum(dim=1)                                            # [E]
+    #intra_topk_sim = torch.sigmoid(
+    #    10 * intra_video_pos).cpu()                         # [E]
+    intra_topk_sim = intra_video_pos.cpu()
+
+    ## intra neg sim
+    intra_video_all = torch.mul(
+            topk_video_feats.unsqueeze(2),                      # [M, K, 1, C]
+            video_feats[scatter_m2v].unsqueeze(1),              # [M, 1, P, C]
+        ).sum(dim=-1).reshape(M * K, -1)                        # [M * K, P]
+    intra_video_all = intra_video_all[ref_idx]                  # [E, P]
+    intra_video_neg_mask = iou2d <= 0.5                         # [S, P]
+    intra_video_neg_mask = intra_video_neg_mask[scatter_e2s]    # [E, P]
+
+    ## mean neg sim for each intra pair
+    #intra_neg_sim = torch.sigmoid(10 * intra_video_all)         # [E, P]
+    ## cos sim [-1, 1]
+    intra_neg_sim = intra_video_all
+    intra_neg_sim = intra_neg_sim.mul(intra_video_neg_mask)     # [E, P]
+    
+    sample_neg_num = intra_video_neg_mask.sum(dim=-1).squeeze() # [E] for computing mean
+    intra_neg_sim = intra_neg_sim.sum(dim=-1).squeeze()         # [E]
+    intra_neg_sim = intra_neg_sim.div(
+        sample_neg_num
+    ).cpu()                                                     # [E]
+
 
 
     return inter_topk_sim, inter_topk_sim_single, inter_topk_sim_multi, \
@@ -274,14 +256,14 @@ def test_epoch(
             nms_moments = pred_moments_batch["out_moments"][shift_pred: shift_pred + num_proposals] ## [num_props, 2]
             nms_moments = (nms_moments * config.num_clips).round().long()   # Pred
 
-            if sample_idx_count % 200 == 0 and epoch > 0:
+            if dist.is_main() and sample_idx_count % 200 == 0 and epoch > 0:
                 plot_path = os.path.join(result_path, f"sample_{sample_idx_count}_epoch_{epoch}.jpg")
                 plot_moments_on_iou2d(
-                     gt_iou2d, scores2d, moments, nms_moments, plot_path, mask2d.cpu())
+                     gt_iou2d, scores2d, nms_moments, plot_path)
 
             shift_gt = shift_gt + num_gt_targets
             shift_pred = shift_pred + num_proposals
-            sample_idx_count += 1
+            sample_idx_count += dist.get_world_size()
 
         '''
         ## record topk similarity score
@@ -689,7 +671,6 @@ def training_loop(config: AttrDict):
                 path = os.path.join(config.logdir, f"ckpt_{epoch}.pth")
                 torch.save(state, path)
             
-            #if test_recall[config.best_metric] > best_recall[config.best_metric]: 
             if test_mAPs[config.best_metric] > best_mAPs[config.best_metric]:
                 best_recall = test_recall
                 best_mAPs = test_mAPs
@@ -773,14 +754,14 @@ def test_epoch_bbox_reg(
             nms_moments = pred_moments_batch["out_moments"][shift_pred: shift_pred + num_proposals] ## [num_props, 2]
             nms_moments = (nms_moments * config.num_clips).round().long()   # Pred
 
-            if sample_idx_count % 50 == 0 and epoch > 0:
+            if dist.is_main() and sample_idx_count % 200 == 0 and epoch > 0:
                 plot_path = os.path.join(result_path, f"sample_{sample_idx_count}_epoch_{epoch}.jpg")
                 plot_moments_on_iou2d(
                      gt_iou2d, scores2d, nms_moments, plot_path)
 
             shift_gt = shift_gt + num_gt_targets
             shift_pred = shift_pred + num_proposals
-            sample_idx_count += 1
+            sample_idx_count += dist.get_world_size()
 
 
     return pred_moments, true_moments
@@ -810,7 +791,9 @@ def train_epoch_bbox_reg(
     true_moments = []
     for batch, _ in pbar:
         batch = {key: value.to(device) for key, value in batch.items()}
-        iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips) # [M, N, N] for each target
+        #iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips) # [M, N, N] for each target
+        iou2ds = moments_to_rescaled_iou2ds(batch['tgt_moments'], config.num_clips) # [M, N, N] for each target
+        
         iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets']) # [S, N, N] for each sentence
 
         video_feats, sents_feats, logits2d, scores2ds, mask2d, bbox_offset = model(**batch)
@@ -818,7 +801,6 @@ def train_epoch_bbox_reg(
         ## scores2ds, mask2d are .detach() in model, so out_moments should not compute gradient
         ## out_moments: [S, P, 2],  out_scores1ds: [S, P]  
         out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
-        
         
         ## add bbox_offset: [S, 2, N, N] to out_moments: [S, P, 2]
         S = scores2ds.shape[0]
@@ -830,7 +812,7 @@ def train_epoch_bbox_reg(
         #out_moments = out_moments.masked_select(valid_mask.unsqueeze(-1)).view(S, -1, 2)   # [S, P', 2]
         #out_scores1ds = out_scores1ds.masked_select(valid_mask).view(S, -1) # [S, P']
         ## clamp start and end
-        out_moments = torch.clamp(out_moments, min=0, max=1)                # [S, P']
+        out_moments = torch.clamp(out_moments, min=0, max=1)                # [S, P]
         
         ## nms
         ## out_moments.clone().detach() create a copy of out_moments that doesn't require grads
@@ -846,6 +828,7 @@ def train_epoch_bbox_reg(
         true_moments.append(true_moments_batch)
         
         ## confidence score
+        '''
         loss_conf = loss_conf_fn(
                         logits2d=logits2d, 
                         iou2d=iou2d,
@@ -853,18 +836,10 @@ def train_epoch_bbox_reg(
                         mask2d=mask2d,
                         num_targets=batch['num_targets'],
                     )
-        
+        '''
+        ## testing ScaledIoU loss with Rescaled IoU
+        loss_conf = loss_conf_fn(logits2d, iou2d, mask2d)
         ## bbox regression score
-        '''
-        loss_bbox_reg = loss_bbox_reg_fn(
-                            out_moments=out_moments, 
-                            tgt_moments=batch['tgt_moments'], 
-                            num_targets=batch['num_targets'],
-                            iou2ds=iou2ds,
-                            mask2d=mask2d,
-                            valid_mask=valid_mask,
-                        )
-        '''
         loss_bbox_reg = loss_bbox_reg_fn(
                             out_moments=out_moments, 
                             tgt_moments=batch['tgt_moments'], 
@@ -902,9 +877,9 @@ def train_epoch_bbox_reg(
 
         loss = 0
         ## confidence loss
-        loss += loss_conf * 1.0
+        loss += loss_conf * config.iou_weight
         ## bbox regression loss
-        loss += loss_bbox_reg * 1.0
+        loss += loss_bbox_reg * config.bbox_reg_weight
         ## contrastive loss
         if epoch <= config.only_iou_epoch:            
             loss += loss_contrastive * config.contrastive_weight
@@ -983,11 +958,12 @@ def training_loop_bbox_reg(config: AttrDict):
     )
     
     ## iou_threshold is for selecting foreground
-    loss_conf_fn = ConfidenceLoss(iou_threshold=config.iou_threshold)
+    #loss_conf_fn = ConfidenceLoss(iou_threshold=config.iou_threshold)
+    loss_conf_fn = ScaledIoULoss(config.min_iou, config.max_iou)
     loss_bbox_reg_fn = BboxRegressionLoss(iou_threshold=config.iou_threshold)
 
     # model
-    model_local = MMN(
+    model_local = MMN_bbox_reg(
         num_init_clips=config.num_init_clips,
         feat1d_in_channel=train_dataset.get_feat_dim(),
         feat1d_out_channel=config.feat1d_out_channel,
@@ -1039,7 +1015,6 @@ def training_loop_bbox_reg(config: AttrDict):
                                                 model, test_loader, 0, config
                                             )
     
-
 
     # evaluate test set before training to get initial recall
     if dist.is_main():
@@ -1176,7 +1151,6 @@ def training_loop_bbox_reg(config: AttrDict):
     if dist.is_main():
         train_writer.close()
         test_writer.close()
-
 
 
 
