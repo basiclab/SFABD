@@ -11,7 +11,10 @@ Folder structure of `./data`.
 │   ├── train_multitarget.json
 │   └── vgg_rgb_features.hdf5
 └── QVHighlights
-    ├── QVHighlights_c3d.hdf5
+    ├── features
+    │   ├── clip_features
+    │   ├── clip_text_features
+    │   └── slowfast_features
     ├── test.json
     ├── train.json
     └── val.json
@@ -30,18 +33,18 @@ Folder structure of `./data`.
 ## Training
 - Single GPU training.
     ```
-    python train.py --config path/to/config.json --logdir path/to/log/dir
+    python main.py --config path/to/config.json --logdir path/to/log/dir
     ```
 
 - Multi-GPU training.
     ```
-    CUDA_VISIBLE_DEVICES=0,1,2,3 python train.py --config path/to/config.json --logdir path/to/log/dir
+    CUDA_VISIBLE_DEVICES=0,1,2,3 python main.py --config path/to/config.json --logdir path/to/log/dir
     ```
 
 ## Submission
 - Make sumbission zip file.
     ```
-    python train.py --config path/to/config.json --logdir path/to/log/dir
+    python main.py --test_only --config path/to/config.json --logdir path/to/log/dir
     ```
 
 ## Tensorboard
