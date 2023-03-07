@@ -21,7 +21,7 @@
     "pos_topk": 1,
     "margin": 0.3,
     "inter": true,
-    "intra": false,
+    "intra": true,
     "intra_start_epoch": 0,
     "contrastive_weight": 1,
     "cont_weight_step": 0.01,
@@ -42,6 +42,6 @@
     "nms_threshold": 0.5,
     "recall_Ns": [1, 5],
     "recall_IoUs": [0.5, 0.7],
-    "logdir": "./logs/qvhighlights2s-m-iou-inter",
+    "logdir": "./logs/qvhighlights2s-m-iou-inter-intra",
     "result_plot_path": "result_plot"
 }

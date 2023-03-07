@@ -4,7 +4,7 @@ import tempfile
 import click
 import torch.multiprocessing
 
-from src.training import training_loop
+from src.training import training_loop, training_loop_bbox_reg, training_loop_PE
 from src.testing import testing_loop
 from src.misc import AttrDict, CommandAwareConfig
 
@@ -22,7 +22,7 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--num_clips', default=16)
 # model
 @click.option('--feat1d_out_channel', default=512)
-@click.option('--feat1d_pool_kerenl_size', default=2)
+@click.option('--feat1d_pool_kernel_size', default=2)
 @click.option('--feat2d_pool_counts', default=[16], multiple=True)
 @click.option('--conv2d_hidden_channel', default=512)
 @click.option('--conv2d_kernel_size', default=5)
@@ -30,10 +30,20 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--dual_space/--no-dual_space', default=False)
 # joint model
 @click.option('--joint_space_size', default=256)
-# iou loss
+
+# Probabilistic Embedding
+@click.option('--num_samples', default=7)
+@click.option('--kl/--no-kl', default=True) ## kl constraint
+
+# confidence loss
 @click.option('--min_iou', default=0.5)
 @click.option('--max_iou', default=1.0)
 @click.option('--iou_weight', default=1.0)
+@click.option('--iou_threshold', default=0.75)
+
+# bbox regression loss
+@click.option('--bbox_reg_weight', default=1.0)
+
 # contrastive loss
 @click.option('--tau_video', default=0.1)
 @click.option('--tau_query', default=0.1)
@@ -43,7 +53,12 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--margin', default=0.4)
 @click.option('--inter/--no-inter', default=True)
 @click.option('--intra/--no-intra', default=False)
+@click.option('--intra_start_epoch', default=6)
 @click.option('--contrastive_weight', default=0.05)
+@click.option('--cont_weight_step', default=0.01)
+@click.option('--inter_weight', default=0.1)
+@click.option('--intra_weight', default=0.1)
+
 # optimizer
 @click.option('--base_lr', default=1e-4)
 @click.option('--bert_lr', default=1e-5)
@@ -53,6 +68,7 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--bert_freeze_epoch', default=4)
 @click.option('--only_iou_epoch', default=7)
 @click.option('--grad_clip', default=5.0)
+@click.option('--step_gamma', default=0.1)
 # testing options
 @click.option('--test_batch_size', default=64)
 @click.option('--nms_threshold', default=0.5)
@@ -60,8 +76,10 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--recall_IoUs', 'recall_IoUs', default=[0.5, 0.7], multiple=True)
 # logging
 @click.option('--logdir', default="./logs/test", type=str)
-@click.option('--best_metric', default="R@1,IoU=0.7")
-@click.option('--save_freq', default=5)
+@click.option('--result_plot_path', default="/result_plot", type=str)
+
+@click.option('--best_metric', default="avg_mAP")
+@click.option('--save_freq', default=15)
 # visualization options (test_only)
 @click.option('--draw_rec', default=5)
 @click.option('--draw_iou', default=0.7)
@@ -99,6 +117,8 @@ def subprocess(rank, world_size, temp_dir, config):
     else:
         # training
         training_loop(config)
+        #training_loop_bbox_reg(config)
+        #training_loop_PE(config)
 
 
 if __name__ == "__main__":

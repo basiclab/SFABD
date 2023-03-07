@@ -24,7 +24,7 @@ class QVHighlights(CollateBase):
         assert len(self.feat_dirs) == len(self.fallback_feat_dir)
 
     def get_feat_dim(self):
-        return 2816
+        return 2816  ## slowfast: 2304 + clip: 512
 
     # override
     def get_feat(self, anno):
