@@ -160,7 +160,7 @@ def calculate_mAPs(
     shift_p = 0
     shift_t = 0
     for num_p, num_t in zip(num_proposals, num_targets):
-        sample_tgt_moments = tgt_moments[shift_t: shift_t + num_t]
+        sample_tgt_moments = tgt_moments[shift_t: shift_t + num_t] ## [M, 2]
         calc_buffer.append([
             sample_tgt_moments,
             out_moments[shift_p: shift_p + num_p],
@@ -182,23 +182,30 @@ def calculate_mAPs(
             ])
         
         ## short/medium/long
-        tgt_length = sample_tgt_moments[1] - sample_tgt_moments[0]
-        calc_buffer_short.append([
-            sample_tgt_moments[tgt_length.lt(0.15)],
-            out_moments[shift_p: shift_p + num_p],
-            out_scores1ds[shift_p: shift_p + num_p],
-        ])
-        calc_buffer_medium.append([
-            sample_tgt_moments[tgt_length.ge(0.15).lt(0.5)],
-            out_moments[shift_p: shift_p + num_p],
-            out_scores1ds[shift_p: shift_p + num_p],
-        ])
-        calc_buffer_long.append([
-            sample_tgt_moments[tgt_length.ge(0.15)],
-            out_moments[shift_p: shift_p + num_p],
-            out_scores1ds[shift_p: shift_p + num_p],
-        ])
+        tgt_length = sample_tgt_moments[:, 1] - sample_tgt_moments[:, 0]    ## [M]
+        short_mask = tgt_length.lt(0.15)
+        medium_mask = tgt_length.ge(0.15) * tgt_length.lt(0.5)
+        long_mask = tgt_length.gt(0.5)
         
+        if short_mask.sum() > 0:
+            calc_buffer_short.append([
+                sample_tgt_moments[short_mask],
+                out_moments[shift_p: shift_p + num_p],
+                out_scores1ds[shift_p: shift_p + num_p],
+            ])
+        if medium_mask.sum() > 0:    
+            calc_buffer_medium.append([
+                sample_tgt_moments[medium_mask],
+                out_moments[shift_p: shift_p + num_p],
+                out_scores1ds[shift_p: shift_p + num_p],
+            ])
+        if long_mask.sum() > 0:
+            calc_buffer_long.append([
+                sample_tgt_moments[long_mask],
+                out_moments[shift_p: shift_p + num_p],
+                out_scores1ds[shift_p: shift_p + num_p],
+            ])
+            
         # for _, target in enumerate(tgt_moments[shift_t: shift_t + num_t]):
         #     target_length = target[1] - target[0]
         #     if target_length <= 0.15:   ## short clips
