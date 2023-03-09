@@ -77,8 +77,9 @@ class CollateBase(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         anno = self.annos[idx]
         video_feats = self.get_feat(anno)
-        
+
         return {
+            'idx': torch.ones(anno['num_sentences'], dtype=torch.long) * idx,
             'video_feats': video_feats,
             **anno,
         }
@@ -115,6 +116,7 @@ class CollateBase(torch.utils.data.Dataset):
             'qids': batch['qids'],
             'sentences': batch['sentences'],
             'vid': batch['vid'],
+            'idx': torch.cat(batch['idx']),
             'duration': batch['duration'],
         }
 

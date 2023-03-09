@@ -2,7 +2,7 @@ import importlib
 import json
 import random
 import warnings
-from typing import Dict
+from typing import Dict, Union, List
 
 import click
 import numpy as np
@@ -51,17 +51,23 @@ def construct_class(module, *args, **kwargs):
 def print_table(
     epoch: int = 0,
     rows: Dict[str, Dict[str, float]] = {},
+    keys: Union[None, List[str]] = None,
 ) -> None:
-    columns = set()
+    column_names = set()
     for row in rows.values():
-        columns.update(row.keys())
-    columns = sorted(columns)
+        if keys:
+            for key in row.keys():
+                if any(key.startswith(k) for k in keys):
+                    column_names.add(key)
+        else:
+            column_names.update(row.keys())
+    column_names = sorted(column_names)
 
-    rows_str = [[f"Epoch {epoch:2d}", *columns]]
+    rows_str = [[f"Epoch {epoch:2d}", *column_names]]
     rows_width = [len(head) for head in rows_str[0]]
     for row_name, row in rows.items():
         row_str = [row_name]
-        for column in columns:
+        for column in column_names:
             if column in row:
                 row_str.append(f"{row[column] * 100:.3f}")
             else:

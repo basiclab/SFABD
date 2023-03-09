@@ -23,8 +23,8 @@
     "inter": true,
     "intra": true,
     "intra_start_epoch": 0,
-    "contrastive_weight": 1,
-    "cont_weight_step": 0.01,
+    "contrastive_weight": 1.0,
+    "contrastive_weight_decay": 0.01,
     "inter_weight": 1,
     "intra_weight": 0.1,
     "base_lr": 8e-4,
@@ -33,15 +33,12 @@
     "epochs": 10,
     "milestones": [8],
     "bert_freeze_epoch": 4,
-    "only_iou_epoch": 6,
-    "num_samples": 7,
-    "kl": true,
+    "contrastive_decay_start": 7,
     "grad_clip": 5.0,
     "step_gamma": 0.1,
     "test_batch_size": 48,
     "nms_threshold": 0.5,
     "recall_Ns": [1, 5],
     "recall_IoUs": [0.5, 0.7],
-    "logdir": "./logs/qvhighlights2s-m-iou-inter-intra",
-    "result_plot_path": "result_plot"
+    "logdir": "./logs/qvhighlights2s-m-iou-inter-intra"
 }
