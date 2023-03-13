@@ -13,10 +13,6 @@
     "min_iou": 0.5,
     "max_iou": 1.0,
     "iou_weight": 1.0,
-<<<<<<< HEAD
-    "confidence_weight": 1.0,
-=======
->>>>>>> ad5f10b919711430b23b3366d8d4c5af2f478b83
     "bbox_reg_weight": 1.0,
     "iou_threshold": 0.75,
     "tau_video": 0.1,
@@ -34,11 +30,7 @@
     "base_lr": 8e-4,
     "bert_lr": 8e-5,
     "batch_size": 24,
-<<<<<<< HEAD
-    "epochs": 12,
-=======
     "epochs": 10,
->>>>>>> ad5f10b919711430b23b3366d8d4c5af2f478b83
     "milestones": [8],
     "bert_freeze_epoch": 4,
     "only_iou_epoch": 6,

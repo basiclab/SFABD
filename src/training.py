@@ -15,7 +15,7 @@ from tqdm import tqdm
 import src.dist as dist
 from src.evaluation import calculate_recall, calculate_mAPs
 from src.losses.main import (
-        ScaledIoULoss, ContrastiveLoss, ConfidenceLoss, 
+        ScaledIoULoss, ScaledIoUFocalLoss, ContrastiveLoss, ConfidenceLoss, 
         BboxRegressionLoss, ProbEmbedContrastiveLoss
 )
 from src.misc import AttrDict, set_seed, print_table, construct_class
@@ -256,7 +256,7 @@ def test_epoch(
             nms_moments = pred_moments_batch["out_moments"][shift_pred: shift_pred + num_proposals] ## [num_props, 2]
             nms_moments = (nms_moments * config.num_clips).round().long()   # Pred
 
-            if dist.is_main() and sample_idx_count % 200 == 0 and epoch > 0:
+            if dist.is_main() and sample_idx_count % 100 == 0 and epoch > 0:
                 plot_path = os.path.join(result_path, f"sample_{sample_idx_count}_epoch_{epoch}.jpg")
                 plot_moments_on_iou2d(
                      gt_iou2d, scores2d, nms_moments, plot_path)
@@ -713,16 +713,12 @@ def test_epoch_bbox_reg(
         out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d) ## out_moments: [S, P, 2]
         
         ## add bbox_offset: [S, 2, N, N] to out_moments: [S, P, 2]
-        S = scores2ds.shape[0]
+        S, N, _ = scores2ds.shape
         bbox_offset_1ds = bbox_offset.masked_select(mask2d).view(S, 2, -1)  # [S, 2, P]
         bbox_offset_1ds = bbox_offset_1ds.permute(0, 2, 1)                  # [S, P, 2]
-        out_moments = out_moments + bbox_offset_1ds.sigmoid()               # [S, P, 2]
-        '''
-        ## remove invalid box after offset (end <= start)
-        valid_mask = (out_moments[:, :, 1] - out_moments[:, :, 0]) > 0      # [S, P]
-        out_moments = out_moments.masked_select(valid_mask.unsqueeze(-1)).view(S, -1, 2)   # [S, P', 2]
-        out_scores1ds = out_scores1ds.masked_select(valid_mask).view(S, -1) # [S, P']
-        '''
+        #out_moments = out_moments + bbox_offset_1ds.tanh() * 1/N            # [S, P, 2]
+        out_moments = out_moments + bbox_offset_1ds.tanh()                  # [S, P, 2]
+
         ## clamp start and end
         out_moments = torch.clamp(out_moments, min=0, max=1)                # [S, P, 2]
         
@@ -754,10 +750,9 @@ def test_epoch_bbox_reg(
             nms_moments = pred_moments_batch["out_moments"][shift_pred: shift_pred + num_proposals] ## [num_props, 2]
             nms_moments = (nms_moments * config.num_clips).round().long()   # Pred
 
-            if dist.is_main() and sample_idx_count % 200 == 0 and epoch > 0:
+            if dist.is_main() and sample_idx_count % 100 == 0 and epoch > 0:
                 plot_path = os.path.join(result_path, f"sample_{sample_idx_count}_epoch_{epoch}.jpg")
-                plot_moments_on_iou2d(
-                     gt_iou2d, scores2d, nms_moments, plot_path)
+                plot_moments_on_iou2d(gt_iou2d, scores2d, nms_moments, plot_path)
 
             shift_gt = shift_gt + num_gt_targets
             shift_pred = shift_pred + num_proposals
@@ -802,15 +797,12 @@ def train_epoch_bbox_reg(
         ## out_moments: [S, P, 2],  out_scores1ds: [S, P]  
         out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
         
-        ## add bbox_offset: [S, 2, N, N] to out_moments: [S, P, 2]
-        S = scores2ds.shape[0]
+        ## add bbox_offset: [S, 2, N, N] to out_moments: [S, P, 2] 
+        S, N, _ = scores2ds.shape
         bbox_offset_1ds = bbox_offset.masked_select(mask2d).view(S, 2, -1)  # [S, 2, P]
         bbox_offset_1ds = bbox_offset_1ds.permute(0, 2, 1)                  # [S, P, 2]
-        out_moments = out_moments + bbox_offset_1ds.sigmoid()               # [S, P, 2]
-        ## remove invalid box after offset (end <= start)
-        #valid_mask = (out_moments[:, :, 1] - out_moments[:, :, 0]) > 0      # [S, P]
-        #out_moments = out_moments.masked_select(valid_mask.unsqueeze(-1)).view(S, -1, 2)   # [S, P', 2]
-        #out_scores1ds = out_scores1ds.masked_select(valid_mask).view(S, -1) # [S, P']
+        #out_moments = out_moments + bbox_offset_1ds.tanh() * 1/N            # [S, P, 2]
+        out_moments = out_moments + bbox_offset_1ds.tanh()                  # [S, P, 2]
         ## clamp start and end
         out_moments = torch.clamp(out_moments, min=0, max=1)                # [S, P]
         
@@ -960,6 +952,8 @@ def training_loop_bbox_reg(config: AttrDict):
     ## iou_threshold is for selecting foreground
     #loss_conf_fn = ConfidenceLoss(iou_threshold=config.iou_threshold)
     loss_conf_fn = ScaledIoULoss(config.min_iou, config.max_iou)
+    ## testing Focal loss
+    #loss_conf_fn = ScaledIoUFocalLoss(config.min_iou, config.max_iou, scale=10, alpha=0.25, gamma=2)
     loss_bbox_reg_fn = BboxRegressionLoss(iou_threshold=config.iou_threshold)
 
     # model

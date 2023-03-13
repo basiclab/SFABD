@@ -116,8 +116,8 @@ def subprocess(rank, world_size, temp_dir, config):
         testing_loop(config)
     else:
         # training
-        training_loop(config)
-        #training_loop_bbox_reg(config)
+        #training_loop(config)
+        training_loop_bbox_reg(config)
         #training_loop_PE(config)
 
 

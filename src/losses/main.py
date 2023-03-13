@@ -36,11 +36,11 @@ class ScaledIoULoss(nn.Module):
 class ScaledIoUFocalLoss(nn.Module):
     def __init__(
         self, 
-        min_iou: float, 
-        max_iou: float, 
-        scale: float,
-        alpha: float,
-        gamma: float,
+        min_iou: float = 0.5, 
+        max_iou: float = 1, 
+        scale: float = 10,
+        alpha: float = 0.25,
+        gamma: float = 2,
     ):
         super().__init__()
         self.min_iou = min_iou
@@ -498,10 +498,12 @@ class ContrastiveLoss(nn.Module):
 
             ## RuntimeError: torch.cat(): expected a non-empty list of Tensors
             ## sometimes a batch only contains single-target samples, so combination is empty
+            
             if len(combinations) == 0:
                 loss_intra_video = torch.tensor(0., device=device)
                 return loss_inter_video, loss_inter_query, loss_intra_video
-
+            
+            
             # E: number of (E)numerated positive pairs
             ref_idx, pos_idx = torch.cat(combinations, dim=0).t()   # [E], [E]
             scatter_e2s = torch.cat(scatter_e2s, dim=0).long()      # [E]  ex.[0, 0, 0, 1, 1, 1...]
