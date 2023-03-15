@@ -14,7 +14,10 @@ import src.dist as dist
 from src.evaluation import calculate_recall, calculate_mAPs, recall_name
 from src.misc import print_table, construct_class
 from src.models.model import MMN, MMN_bbox_reg, MMN_PE
-from src.utils import nms, scores2ds_to_moments
+from src.utils import (
+    nms, scores2ds_to_moments, 
+    moments_to_iou2ds, moments_to_rescaled_iou2ds, iou2ds_to_iou2d
+)
 
 
 def testing_loop(config):
@@ -64,6 +67,15 @@ def testing_loop(config):
     model = DistributedDataParallel(
         model, device_ids=[device], find_unused_parameters=True)
     model.eval()
+    
+    ## mAP metric groups
+    mAP_keys_group_1 = ["avg_mAP", "mAP@0.50", "mAP@0.75", 
+                        "single_avg_mAP", "single_mAP@0.50", "single_mAP@0.75",
+                        "multi_avg_mAP", "multi_mAP@0.50", "multi_mAP@0.75",]
+    mAP_keys_group_2 = ["short_avg_mAP", "short_mAP@0.50", "short_mAP@0.75",
+                        "medium_avg_mAP", "medium_mAP@0.50", "medium_mAP@0.75",
+                        "long_avg_mAP", "long_mAP@0.50", "long_mAP@0.75"]
+
 
     ## Val
     pred_val_submission = []
@@ -72,6 +84,13 @@ def testing_loop(config):
     pbar = tqdm(val_loader, ncols=0, leave=False, desc="Inferencing val set")
     for batch, batch_info in pbar:
         batch = {key: value.to(device) for key, value in batch.items()}
+        true_moments_batch = {
+            'tgt_moments': batch['tgt_moments'],
+            'num_targets': batch['num_targets'],
+        }
+        true_moments_batch = dist.gather_dict(true_moments_batch, to_cpu=True)
+        true_moments.append(true_moments_batch)
+        
         with torch.no_grad():
             *_, scores2ds, mask2d = model(**batch)
 
@@ -79,13 +98,6 @@ def testing_loop(config):
         pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
         pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
         pred_moments.append(pred_moments_batch)
-
-        true_moments_batch = {
-            'tgt_moments': batch['tgt_moments'],
-            'num_targets': batch['num_targets'],
-        }
-        true_moments_batch = dist.gather_dict(true_moments_batch, to_cpu=True)
-        true_moments.append(true_moments_batch)
 
         assert len(batch_info['qids']) == len(batch_info['sentences']) == len(batch_info['vid']) == len(batch_info['duration'])
         shift = 0
@@ -113,14 +125,16 @@ def testing_loop(config):
     recall = calculate_recall(
         pred_moments, true_moments, config.recall_Ns, config.recall_IoUs)
     mAPs = calculate_mAPs(pred_moments, true_moments)
-
+    ## split mAPs table, too long to print on terminal
+    mAPs_group_1 = {key: mAPs[key] for key in mAP_keys_group_1}
+    mAPs_group_2 = {key: mAPs[key] for key in mAP_keys_group_2}
     print_table(epoch=0, rows={'val': recall})
-    print_table(epoch=0, rows={'val': mAPs})
+    print_table(epoch=0, rows={'val': mAPs_group_1})
+    print_table(epoch=0, rows={'val': mAPs_group_2})
 
     ## test
     pred_test_submission = []
     pred_moments = []
-    true_moments = []
     pbar = tqdm(test_loader, ncols=0, leave=False, desc="Inferencing test set")
     for batch, batch_info in pbar:
         batch = {key: value.to(device) for key, value in batch.items()}
@@ -131,13 +145,6 @@ def testing_loop(config):
         pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
         pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
         pred_moments.append(pred_moments_batch)
-
-        true_moments_batch = {
-            'tgt_moments': batch['tgt_moments'],
-            'num_targets': batch['num_targets'],
-        }
-        true_moments_batch = dist.gather_dict(true_moments_batch, to_cpu=True)
-        true_moments.append(true_moments_batch)
 
         assert len(batch_info['qids']) == len(batch_info['sentences']) == len(batch_info['vid']) == len(batch_info['duration'])
         shift = 0
@@ -225,6 +232,14 @@ def testing_loop_bbox_reg(config):
         model, device_ids=[device], find_unused_parameters=True)
     model.eval()
 
+    ## mAP metric groups
+    mAP_keys_group_1 = ["avg_mAP", "mAP@0.50", "mAP@0.75", 
+                        "single_avg_mAP", "single_mAP@0.50", "single_mAP@0.75",
+                        "multi_avg_mAP", "multi_mAP@0.50", "multi_mAP@0.75",]
+    mAP_keys_group_2 = ["short_avg_mAP", "short_mAP@0.50", "short_mAP@0.75",
+                        "medium_avg_mAP", "medium_mAP@0.50", "medium_mAP@0.75",
+                        "long_avg_mAP", "long_mAP@0.50", "long_mAP@0.75"]
+
     ## Val
     pred_val_submission = []
     pred_moments = []
@@ -232,25 +247,6 @@ def testing_loop_bbox_reg(config):
     pbar = tqdm(val_loader, ncols=0, leave=False, desc="Inferencing val set")
     for batch, batch_info in pbar:
         batch = {key: value.to(device) for key, value in batch.items()}
-        with torch.no_grad():
-            *_, scores2ds, mask2d, bbox_offset = model(**batch)
-
-        out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d) ## out_moments: [S, P, 2]
-        ## add bbox_offset: [S, 2, N, N] to out_moments: [S, P, 2]
-        S, N, _ = scores2ds.shape
-        bbox_offset_1ds = bbox_offset.masked_select(mask2d).view(S, 2, -1)  # [S, 2, P]
-        bbox_offset_1ds = bbox_offset_1ds.permute(0, 2, 1)                  # [S, P, 2]
-        out_moments = out_moments + bbox_offset_1ds.tanh()                  # [S, P, 2]
-        
-        #### testing: add correct offset to small targets' top-1 proposal and check the short mAP ceiling
-        ## find top-1 proposal mask of small targets
-        
-        ## clamp start and end
-        out_moments = torch.clamp(out_moments, min=0, max=1)                # [S, P, 2]
-        
-        pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
-        pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
-        pred_moments.append(pred_moments_batch)
 
         ## GT
         true_moments_batch = {
@@ -260,10 +256,45 @@ def testing_loop_bbox_reg(config):
         true_moments_batch = dist.gather_dict(true_moments_batch, to_cpu=True)
         true_moments.append(true_moments_batch)
 
+        with torch.no_grad():
+            *_, scores2ds, mask2d, bbox, scores1ds = model(**batch)
+        
+        #### testing: add correct offset to small targets' top-1 proposal and check the short mAP ceiling
+        ## find top-1 proposal mask of small targets
+        iou2ds = moments_to_rescaled_iou2ds(batch['tgt_moments'], config.num_clips)
+        #iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets']) # [S, N, N] for each sentence
+        S, _, _ = scores2ds.shape
+        M = iou2ds.shape[0]
+        
+        ## select top1 for each targets
+        iou1ds = iou2ds.masked_select(mask2d).view(M, -1)       # [M, P]
+        P = iou1ds.shape[-1]                                    # 1104                
+        top_k = 3
+        topk_idxs = iou1ds.topk(top_k, dim=1)[1]                # [M, top_k]
+
+        num_targets = batch['num_targets']                      # [S]
+        tgt_moments = batch['tgt_moments']                      # [M, 2]
+        tgt_lens = tgt_moments[:, 1] - tgt_moments[:, 0]        # [M]
+        small_clip_mask = tgt_lens.lt(0.15)                     # [M]
+        small_target_mask = torch.zeros(S, P, device=device)    # [S, P], backgrounds are 0
+        target_count = 0
+        for sample_idx, num_target in enumerate(num_targets):
+            for i in range(num_target):
+                if small_clip_mask[target_count + i]:
+                    for k in range(top_k):
+                        topk_prop_idx = int(topk_idxs[target_count + i, k])
+                        small_target_mask[sample_idx, topk_prop_idx] = 1
+                        ## set this proposal to GT target moment
+                        bbox[sample_idx, topk_prop_idx] = tgt_moments[target_count + i]
+            target_count += num_target
+             
+        pred_moments_batch = nms(bbox, scores1ds, config.nms_threshold)
+        pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
+        pred_moments.append(pred_moments_batch)
+
         ## plot result
         ##
-        
-        
+                
         ## generate submission file
         assert len(batch_info['qids']) == len(batch_info['sentences']) == len(batch_info['vid']) == len(batch_info['duration'])
         shift = 0
@@ -291,40 +322,27 @@ def testing_loop_bbox_reg(config):
     recall = calculate_recall(
         pred_moments, true_moments, config.recall_Ns, config.recall_IoUs)
     mAPs = calculate_mAPs(pred_moments, true_moments)
+    ## split mAPs table, too long to print on terminal
+    mAPs_group_1 = {key: mAPs[key] for key in mAP_keys_group_1}
+    mAPs_group_2 = {key: mAPs[key] for key in mAP_keys_group_2}
 
     print_table(epoch=0, rows={'val': recall})
-    print_table(epoch=0, rows={'val': mAPs})
+    print_table(epoch=0, rows={'val': mAPs_group_1})
+    print_table(epoch=0, rows={'val': mAPs_group_2})
 
+    
     ## test
     pred_test_submission = []
     pred_moments = []
-    true_moments = []
     pbar = tqdm(test_loader, ncols=0, leave=False, desc="Inferencing test set")
     for batch, batch_info in pbar:
         batch = {key: value.to(device) for key, value in batch.items()}
         with torch.no_grad():
-            *_, scores2ds, mask2d, bbox_offset = model(**batch)
-
-        out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d) ## out_moments: [S, P, 2]
-        ## add bbox_offset: [S, 2, N, N] to out_moments: [S, P, 2]
-        S, N, _ = scores2ds.shape
-        bbox_offset_1ds = bbox_offset.masked_select(mask2d).view(S, 2, -1)  # [S, 2, P]
-        bbox_offset_1ds = bbox_offset_1ds.permute(0, 2, 1)                  # [S, P, 2]
-        out_moments = out_moments + bbox_offset_1ds.tanh()                  # [S, P, 2]
-        ## clamp start and end
-        out_moments = torch.clamp(out_moments, min=0, max=1)                # [S, P, 2]
+            *_, scores2ds, mask2d, bbox, scores1ds = model(**batch)
         
-        pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
+        pred_moments_batch = nms(bbox, scores1ds, config.nms_threshold)
         pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
-        pred_moments.append(pred_moments_batch)
-
-        ## GT
-        true_moments_batch = {
-            'tgt_moments': batch['tgt_moments'],
-            'num_targets': batch['num_targets'],
-        }
-        true_moments_batch = dist.gather_dict(true_moments_batch, to_cpu=True)
-        true_moments.append(true_moments_batch)
+        pred_moments.append(pred_moments_batch)        
 
         ## plot result
         ##
@@ -365,7 +383,7 @@ def testing_loop_bbox_reg(config):
         test_submission_path = os.path.join(config.logdir, 'hl_test_submission.jsonl')
         zip_obj.write(val_submission_path, basename(val_submission_path))
         zip_obj.write(test_submission_path, basename(test_submission_path))
-
+    
 
 
 

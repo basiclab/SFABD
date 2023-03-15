@@ -10,7 +10,7 @@ from src.models.modules import (
 )
 ## for probabilistic embedding
 from src.models.modules import ProposalConv_PE, LanguageModel_PE
-from src.utils import sample_gaussian_tensors
+from src.utils import scores2ds_to_moments, sample_gaussian_tensors
 
 ## cos sim between 2D proposal map and query
 def compute_scores(
@@ -178,7 +178,6 @@ def initialize_weights(model):
             #torch.nn.init.kaiming_normal_(m.weight.data)
             #torch.nn.init.kaiming_uniform_(m.weight.data)
      
-
 class MMN(nn.Module):
     def __init__(
         self,
@@ -274,7 +273,6 @@ class MMN(nn.Module):
             mask2d.detach(),    # [N, N]
         )
 
-
 class MMN_bbox_reg(nn.Module):
     def __init__(
         self,
@@ -321,7 +319,7 @@ class MMN_bbox_reg(nn.Module):
         self.sents_model = LanguageModel(joint_space_size, dual_space)                   # [S, C]
 
         ## bbox offset module
-        self.bbox_offset_head = BboxRegression(joint_space_size)
+        self.bbox_head = BboxRegression(joint_space_size)
         
         ## initialize weight
         #initialize_weights(self)
@@ -368,17 +366,34 @@ class MMN_bbox_reg(nn.Module):
         #### [S, C, N, N] -> [S, 2, N, N] with 1x1 conv
         ## need to predict S outputs instead of B outputs
         scatter_s2v = torch.arange(B, device=video_feats.device).long()
-        scatter_s2v = scatter_s2v.repeat_interleave(num_sentences)          # [S]
-        bbox_offset = self.bbox_offset_head(video_feats1[scatter_s2v], sents_feats1)     # [S, 2, N, N] 
+        scatter_s2v = scatter_s2v.repeat_interleave(num_sentences)              # [S]
+        bbox_center_width = self.bbox_head(video_feats1[scatter_s2v], sents_feats1)     # [S, 2, N, N] 
+        S = bbox_center_width.shape[0]
+        bbox_center_width = bbox_center_width.masked_select(mask2d).view(S, 2, -1).permute(0, 2, 1)   # [S, P, 2]
+        bbox_center = bbox_center_width[:, :, 0]
+        bbox_width = bbox_center_width[:, :, 1]
         
-
+        ## bbox_cord contains [center, width]
+        ## build the bbox
+        ## anchor: [S, P, 2],  scores1ds: [S, P]
+        anchor, scores1ds = scores2ds_to_moments(scores2d.detach(), mask2d.detach())
+        proposal_width = anchor[:, :, 1] - anchor[:, :, 0]        # [S, P]
+        bbox_center = anchor[:, :, 0] + \
+                        bbox_center.sigmoid() * proposal_width              # [S, P]
+        bbox_width = proposal_width * torch.exp(bbox_width)                 # [S, P]
+        bbox_start = bbox_center - 0.5 * bbox_width                         # [S, P]
+        bbox_end = bbox_center + 0.5 * bbox_width                           # [S, P]
+        bbox = torch.stack((bbox_start, bbox_end), dim=-1)                  # [S, P, 2]
+        bbox = torch.clamp(bbox, min=0, max=1)                              # [S, P, 2]
+        
         return (
             video_feats2,       # [B, C, N, N]  for contrastive learning
             sents_feats2,       # [S, C]        for contrastive learning
             logits2d,           # [S, N, N]     for iou loss (sim score * scale=10)
             scores2d.detach(),  # [S, N, N]     for evaluation
             mask2d.detach(),    # [N, N]
-            bbox_offset,        # [S, 2, N, N] 
+            bbox,               # [S, P, 2]     
+            scores1ds,      # [S, P]        confidence score of each proposals
         )
 
 

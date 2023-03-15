@@ -308,7 +308,7 @@ class BboxRegression(nn.Module):
         in_channel: int,        # dim of embedding space
     ):
         super().__init__()
-        self.offset_predictor = nn.Sequential(
+        self.bbox_predictor = nn.Sequential(
                                     nn.Conv2d(in_channel*2, in_channel, 1),
                                     nn.ReLU(),
                                     nn.Dropout(0.5),
@@ -326,9 +326,9 @@ class BboxRegression(nn.Module):
         sent_feats = sent_feats.expand(-1, -1, N, N)    ## [S, C, N, N]
         ## channel-wise concat
         concated_feats = torch.cat([video_feats, sent_feats], dim=1)  ## [S, C+C, N, N] 
-        offset = self.offset_predictor(concated_feats)     ## [S, 2, N, N],  delta_s and delta_e
+        bbox_center_width = self.bbox_predictor(concated_feats)     ## [S, 2, N, N],  center and width
         
-        return offset
+        return bbox_center_width
 
      
 class ProposalConv_PE(nn.Module):

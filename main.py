@@ -5,7 +5,7 @@ import click
 import torch.multiprocessing
 
 from src.training import training_loop, training_loop_bbox_reg, training_loop_PE
-from src.testing import testing_loop
+from src.testing import testing_loop, testing_loop_bbox_reg
 from src.misc import AttrDict, CommandAwareConfig
 
 
@@ -35,9 +35,11 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--num_samples', default=7)
 @click.option('--kl/--no-kl', default=True) ## kl constraint
 
-# confidence loss
+# confidence loss (Focal or BCE loss)
 @click.option('--min_iou', default=0.5)
 @click.option('--max_iou', default=1.0)
+@click.option('--alpha', default=0.25)
+@click.option('--gamma', default=2.0)
 @click.option('--iou_weight', default=1.0)
 @click.option('--iou_threshold', default=0.75)
 
@@ -113,7 +115,8 @@ def subprocess(rank, world_size, temp_dir, config):
 
     if config.test_only:
         # testing
-        testing_loop(config)
+        #testing_loop(config)
+        testing_loop_bbox_reg(config)        
     else:
         # training
         #training_loop(config)

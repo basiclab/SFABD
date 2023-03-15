@@ -707,22 +707,22 @@ def test_epoch_bbox_reg(
         batch = {key: value.to(device) for key, value in batch.items()}
 
         with torch.no_grad():
-            video_feats, sents_feats, logits2d, scores2ds, mask2d, bbox_offset = model(**batch)
+            video_feats, sents_feats, logits2d, scores2ds, mask2d, bbox, scores1ds = model(**batch)
         
-        ## out_moments is default proposal moments
-        out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d) ## out_moments: [S, P, 2]
+        # ## out_moments is default proposal moments
+        # out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d) ## out_moments: [S, P, 2]
         
-        ## add bbox_offset: [S, 2, N, N] to out_moments: [S, P, 2]
-        S, N, _ = scores2ds.shape
-        bbox_offset_1ds = bbox_offset.masked_select(mask2d).view(S, 2, -1)  # [S, 2, P]
-        bbox_offset_1ds = bbox_offset_1ds.permute(0, 2, 1)                  # [S, P, 2]
-        #out_moments = out_moments + bbox_offset_1ds.tanh() * 1/N            # [S, P, 2]
-        out_moments = out_moments + bbox_offset_1ds.tanh()                  # [S, P, 2]
+        # ## add bbox_offset: [S, 2, N, N] to out_moments: [S, P, 2]
+        # S, N, _ = scores2ds.shape
+        # bbox_offset_1ds = bbox_offset.masked_select(mask2d).view(S, 2, -1)  # [S, 2, P]
+        # bbox_offset_1ds = bbox_offset_1ds.permute(0, 2, 1)                  # [S, P, 2]
+        # out_moments = out_moments + bbox_offset_1ds.tanh() * 1/N            # [S, P, 2]
+        # out_moments = out_moments + bbox_offset_1ds.tanh()                  # [S, P, 2]
 
-        ## clamp start and end
-        out_moments = torch.clamp(out_moments, min=0, max=1)                # [S, P, 2]
+        # ## clamp start and end
+        # out_moments = torch.clamp(out_moments, min=0, max=1)                # [S, P, 2]
         
-        pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
+        pred_moments_batch = nms(bbox, scores1ds, config.nms_threshold)
         pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
         pred_moments.append(pred_moments_batch)
         
@@ -791,24 +791,24 @@ def train_epoch_bbox_reg(
         
         iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets']) # [S, N, N] for each sentence
 
-        video_feats, sents_feats, logits2d, scores2ds, mask2d, bbox_offset = model(**batch)
+        video_feats, sents_feats, logits2d, scores2ds, mask2d, bbox, scores1ds = model(**batch)
         
-        ## scores2ds, mask2d are .detach() in model, so out_moments should not compute gradient
-        ## out_moments: [S, P, 2],  out_scores1ds: [S, P]  
-        out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
+        # ## scores2ds, mask2d are .detach() in model, so out_moments should not compute gradient
+        # ## out_moments: [S, P, 2],  out_scores1ds: [S, P]  
+        # out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
         
-        ## add bbox_offset: [S, 2, N, N] to out_moments: [S, P, 2] 
-        S, N, _ = scores2ds.shape
-        bbox_offset_1ds = bbox_offset.masked_select(mask2d).view(S, 2, -1)  # [S, 2, P]
-        bbox_offset_1ds = bbox_offset_1ds.permute(0, 2, 1)                  # [S, P, 2]
-        #out_moments = out_moments + bbox_offset_1ds.tanh() * 1/N            # [S, P, 2]
-        out_moments = out_moments + bbox_offset_1ds.tanh()                  # [S, P, 2]
-        ## clamp start and end
-        out_moments = torch.clamp(out_moments, min=0, max=1)                # [S, P]
+        # ## add bbox_offset: [S, 2, N, N] to out_moments: [S, P, 2] 
+        # S, N, _ = scores2ds.shape
+        # bbox_offset_1ds = bbox_offset.masked_select(mask2d).view(S, 2, -1)  # [S, 2, P]
+        # bbox_offset_1ds = bbox_offset_1ds.permute(0, 2, 1)                  # [S, P, 2]
+        # #out_moments = out_moments + bbox_offset_1ds.tanh() * 1/N            # [S, P, 2]
+        # out_moments = out_moments + bbox_offset_1ds.tanh()                  # [S, P, 2]
+        # ## clamp start and end
+        # out_moments = torch.clamp(out_moments, min=0, max=1)                # [S, P, 2]
         
         ## nms
         ## out_moments.clone().detach() create a copy of out_moments that doesn't require grads
-        pred_moments_batch = nms(out_moments.clone().detach(), out_scores1ds, config.nms_threshold)
+        pred_moments_batch = nms(bbox.clone().detach(), scores1ds, config.nms_threshold)
         pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
         pred_moments.append(pred_moments_batch)
 
@@ -829,11 +829,11 @@ def train_epoch_bbox_reg(
                         num_targets=batch['num_targets'],
                     )
         '''
-        ## testing ScaledIoU loss with Rescaled IoU
+        ## testing ScaledIoUFocaLoss with Rescaled IoU
         loss_conf = loss_conf_fn(logits2d, iou2d, mask2d)
         ## bbox regression score
         loss_bbox_reg = loss_bbox_reg_fn(
-                            out_moments=out_moments, 
+                            out_moments=bbox, 
                             tgt_moments=batch['tgt_moments'], 
                             num_targets=batch['num_targets'],
                             iou2ds=iou2ds,
@@ -951,9 +951,15 @@ def training_loop_bbox_reg(config: AttrDict):
     
     ## iou_threshold is for selecting foreground
     #loss_conf_fn = ConfidenceLoss(iou_threshold=config.iou_threshold)
-    loss_conf_fn = ScaledIoULoss(config.min_iou, config.max_iou)
+    #loss_conf_fn = ScaledIoULoss(config.min_iou, config.max_iou)
     ## testing Focal loss
-    #loss_conf_fn = ScaledIoUFocalLoss(config.min_iou, config.max_iou, scale=10, alpha=0.25, gamma=2)
+    loss_conf_fn = ScaledIoUFocalLoss(
+                        min_iou=config.min_iou,
+                        max_iou=config.max_iou,
+                        scale=10,
+                        alpha=config.alpha,
+                        gamma=config.gamma,
+                    )
     loss_bbox_reg_fn = BboxRegressionLoss(iou_threshold=config.iou_threshold)
 
     # model

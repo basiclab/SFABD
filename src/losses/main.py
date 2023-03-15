@@ -63,23 +63,22 @@ class ScaledIoUFocalLoss(nn.Module):
             N: (N)um clips
             S: number of (S)entences
             P: number of (P)roposals = number of 1 in mask2d
+            x: logits
+            p: predicted probability
+            y: label
         """
         S, _, _ = logits2d.shape
         assert logits2d.shape == iou2d.shape, f"{logits2d.shape} != {iou2d.shape}"
-        logits1d = logits2d.masked_select(mask2d).view(S, -1)   # [S, P]
-        scores1d = torch.sigmoid(logits1d * self.scale)         # [S, P]
+        x = logits2d.masked_select(mask2d).view(S, -1)          # [S, P]
+        p = torch.sigmoid(x * self.scale)                       # [S, P]
         iou1d = iou2d.masked_select(mask2d).view(S, -1)         # [S, P]
-        iou1d = self.linear_scale(iou1d)                        # [S, P]
-        
-        ## focal loss
-        ## - (y * a * (1-p)^r * log(p) + (1-y) * (1-a) * p^r * log(1-p))
-        y = iou1d
-        p = scores1d
-        loss = - (y * self.alpha * torch.pow((1-p), self.gamma) * torch.log(p)  
-                + (1-y) * (1-self.alpha) * torch.pow(p, self.gamma) * torch.log(1-p))   ## [S, P]
-        loss = loss.mean()
-        
-        return loss
+        y = self.linear_scale(iou1d)                            # [S, P]
+
+        pos_weight = self.alpha * (1 - p)**self.gamma * y
+        neg_weight = (1 - self.alpha) * p**self.gamma * (1 - y)
+        loss = neg_weight * x + \
+               (pos_weight + neg_weight) * (torch.log1p(torch.exp(-torch.abs(x))) + nn.ReLU(-x))   
+        return loss.mean()
 
 ## fore/background binary classification
 class ConfidenceLoss(nn.Module):
@@ -134,9 +133,11 @@ class ConfidenceLoss(nn.Module):
 class BboxRegressionLoss(nn.Module):
     def __init__(
         self,
-        iou_threshold: float = 0.75,
+        topk: int = 3,
+        iou_threshold: float = 0.5,
     ):
         super().__init__()
+        self.topk = topk
         self.iou_threshold = iou_threshold
     
     def forward(
@@ -146,7 +147,6 @@ class BboxRegressionLoss(nn.Module):
         num_targets: torch.Tensor,  # [S]
         iou2ds: torch.Tensor,       # [M, N, N]
         mask2d: torch.Tensor,       # [N, N]
-        #valid_mask: torch.Tensor,   # [S, P]
     ):
         device = iou2ds.device
         M, N, _ = iou2ds.shape
@@ -158,24 +158,23 @@ class BboxRegressionLoss(nn.Module):
         out_moments = out_moments[scatter_m2s]                      # [M, P, 2]
         ## compute iou with tgt_moments
         ## [M, P, 2],  [M, 1, 2] -> [M, P, 1]
-        bbox_iou = batch_diou(out_moments, tgt_moments.unsqueeze(1))# [M, P, 1]
-        bbox_iou = bbox_iou.squeeze()                               # [M, P]
+        bbox_diou = batch_diou(out_moments, 
+                               tgt_moments.unsqueeze(1))            # [M, P, 1]
+        bbox_diou = bbox_diou.squeeze()                             # [M, P]
         
         ## create mask to find responsible anchors for each target
-        ## select top1 for each M targets
+        ## TODO choose top-k and GT IoU > threshold proposals
         iou1ds = iou2ds.masked_select(mask2d).view(M, -1)           # [M, P]
-        #iou1ds = iou1ds.masked_select(valid_mask).view(M, -1)      # [M, P]
-        top1_idxs = iou1ds.topk(1, dim=1)[1]                        # [M, 1]
+        topk_idxs = iou1ds.topk(self.topk, dim=1)[1]                # [M, topk]
         target_mask = torch.zeros(M, P, device=device)              # [M, P]
-        target_mask[range(M), top1_idxs.squeeze()] = 1
-        
+        for target_idx, sample_topk_idx in enumerate(topk_idxs):
+            for idx in sample_topk_idx:
+                target_mask[target_idx, idx] = 1
         ## select anchors with GT_IoU > IoU_threshold
         target_mask[iou1ds > self.iou_threshold] = 1                # foregrounds are 1
         
-        ## compute loss for all anchors bbox prediction
-        loss = 1 - bbox_iou                                         # [M, P]
-
-        ## compute avg loss only anchors with target_mask = 1
+        loss = 1 - bbox_diou                                         # [M, P]
+        ## only compute anchor loss whose target_mask = 1
         loss = (loss * target_mask).sum() / target_mask.sum()                        
 
         return loss
@@ -807,9 +806,6 @@ class ProbEmbedContrastiveLoss(nn.Module):
             )
         else:
             loss_inter_query = torch.tensor(0., device=device)
-
-
-
 
         return loss_inter_video, loss_inter_query, loss_kl_constraint
 
