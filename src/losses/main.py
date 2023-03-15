@@ -77,7 +77,7 @@ class ScaledIoUFocalLoss(nn.Module):
         pos_weight = self.alpha * (1 - p)**self.gamma * y
         neg_weight = (1 - self.alpha) * p**self.gamma * (1 - y)
         loss = neg_weight * x + \
-               (pos_weight + neg_weight) * (torch.log1p(torch.exp(-torch.abs(x))) + nn.ReLU(-x))   
+               (pos_weight + neg_weight) * (torch.log1p(torch.exp(-torch.abs(x))) + F.relu(-x))   
         return loss.mean()
 
 ## fore/background binary classification
