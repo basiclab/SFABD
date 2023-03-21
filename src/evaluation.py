@@ -136,7 +136,7 @@ def calculate_mAPs(
     pred_moments: List[Dict[str, torch.Tensor]],
     true_moments: List[Dict[str, torch.Tensor]],
     mAP_ious: List[float] = torch.linspace(0.5, 0.95, 10),
-    max_proposals: int = 10,
+    max_proposals: int = None,
 ) -> float:
     pred_moments = batchs2results(pred_moments)
     out_moments = pred_moments['out_moments']
@@ -182,10 +182,11 @@ def calculate_mAPs(
             ])
         
         ## short/medium/long
+        ## short: t <= 5%, medium: 5% < t <= 40%, long: t > 40%
         tgt_length = sample_tgt_moments[:, 1] - sample_tgt_moments[:, 0]    ## [M]
-        short_mask = tgt_length.lt(0.15)
-        medium_mask = tgt_length.ge(0.15) * tgt_length.lt(0.5)
-        long_mask = tgt_length.gt(0.5)
+        short_mask = tgt_length.lt(0.05)
+        medium_mask = tgt_length.ge(0.05) * tgt_length.lt(0.4)
+        long_mask = tgt_length.gt(0.4)
         
         if short_mask.sum() > 0:
             calc_buffer_short.append([
@@ -205,27 +206,6 @@ def calculate_mAPs(
                 out_moments[shift_p: shift_p + num_p],
                 out_scores1ds[shift_p: shift_p + num_p],
             ])
-            
-        # for _, target in enumerate(tgt_moments[shift_t: shift_t + num_t]):
-        #     target_length = target[1] - target[0]
-        #     if target_length <= 0.15:   ## short clips
-        #         calc_buffer_short.append([
-        #             target.unsqueeze(0),
-        #             out_moments[shift_p: shift_p + num_p],
-        #             out_scores1ds[shift_p: shift_p + num_p],
-        #         ])
-        #     elif target_length > 0.15 and target_length <= 0.5:
-        #         calc_buffer_medium.append([
-        #             target.unsqueeze(0),
-        #             out_moments[shift_p: shift_p + num_p],
-        #             out_scores1ds[shift_p: shift_p + num_p],
-        #         ])
-        #     elif target_length > 0.5:
-        #         calc_buffer_long.append([
-        #             target.unsqueeze(0),
-        #             out_moments[shift_p: shift_p + num_p],
-        #             out_scores1ds[shift_p: shift_p + num_p],
-        #         ])
         
         shift_p += num_p
         shift_t += num_t

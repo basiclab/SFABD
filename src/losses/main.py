@@ -70,12 +70,19 @@ class ScaledIoUFocalLoss(nn.Module):
         S, _, _ = logits2d.shape
         assert logits2d.shape == iou2d.shape, f"{logits2d.shape} != {iou2d.shape}"
         x = logits2d.masked_select(mask2d).view(S, -1)          # [S, P]
-        p = torch.sigmoid(x * self.scale)                       # [S, P]
+        ## sigmoid is not numerically stable, sometimes get nan
+        p = torch.sigmoid(x * self.scale)                       # [S, P]    
         iou1d = iou2d.masked_select(mask2d).view(S, -1)         # [S, P]
         y = self.linear_scale(iou1d)                            # [S, P]
 
-        pos_weight = self.alpha * (1 - p)**self.gamma * y
-        neg_weight = (1 - self.alpha) * p**self.gamma * (1 - y)
+        ## with alpha
+        #pos_weight = self.alpha * torch.pow((1 - p), self.gamma) * y
+        #neg_weight = (1 - self.alpha) * torch.pow(p, self.gamma) * (1 - y)
+
+        # no alpha
+        pos_weight = torch.pow((1 - p), self.gamma) * y
+        neg_weight = torch.pow(p, self.gamma) * (1 - y)
+
         loss = neg_weight * x + \
                (pos_weight + neg_weight) * (torch.log1p(torch.exp(-torch.abs(x))) + F.relu(-x))   
         return loss.mean()

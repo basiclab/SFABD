@@ -132,6 +132,7 @@ def testing_loop(config):
     print_table(epoch=0, rows={'val': mAPs_group_1})
     print_table(epoch=0, rows={'val': mAPs_group_2})
 
+    '''
     ## test
     pred_test_submission = []
     pred_moments = []
@@ -182,7 +183,7 @@ def testing_loop(config):
         test_submission_path = os.path.join(config.logdir, 'hl_test_submission.jsonl')
         zip_obj.write(val_submission_path, basename(val_submission_path))
         zip_obj.write(test_submission_path, basename(test_submission_path))
-
+    '''
 
 def testing_loop_bbox_reg(config):
     device = dist.get_device()

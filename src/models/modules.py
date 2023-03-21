@@ -95,83 +95,86 @@ class SparsePropConv(nn.Module):
         super().__init__()
         self.num_scale_layers = counts
         self.hidden_size = hidden_size
-        #self.proj = nn.Conv2d(512, 256, 1) # testing
         # torch.nn.init.normal_(self.proj.weight, std=0.2)
-
         self.convs = nn.ModuleList()
+        
         for layer_idx, layer_count in enumerate(self.num_scale_layers):
             ## first layer
+            ## no first conv1d
             if layer_idx == 0:
-                '''
-                self.convs.extend([
-                    nn.Sequential(
-                        nn.Conv1d(hidden_size, hidden_size, 1, 1),
-                        nn.BatchNorm1d(hidden_size),
-                        nn.ReLU(),
-                    )
-                ])
-                
-                for count in range(1, layer_count):
-                    if (count % 2) != 0: ## 1, 3, 5 ...
-                        self.convs.extend([nn.MaxPool1d(2, 1)])
-                    else: ## 2, 4, 6 ...
-                        self.convs.extend([
-                            nn.Sequential(
-                                nn.Conv1d(hidden_size, hidden_size, 2, 1),
-                                nn.BatchNorm1d(hidden_size),
-                                nn.ReLU(),
-                            )
-                        ])
-                '''
-                '''
-                ## maxpool except first input
-                for i in range(1, layer_count):
-                    self.convs.extend([
-                        nn.MaxPool1d(2, 1),
-                    ])
-
-                '''
-                self.convs.extend([nn.Sequential(
-                    nn.Conv1d(hidden_size, hidden_size, 2, 1),
-                    nn.BatchNorm1d(hidden_size),
-                    nn.ReLU(),
-                ) for _ in range(layer_count-1)])  
+                for order in range(layer_count):
+                    if order != 0:
+                        if (order % 2) != 0: ## 1, 3, 5 ...
+                            # self.convs.extend([nn.MaxPool1d(2, 1)])
+                            self.convs.extend([
+                                nn.Sequential(
+                                    nn.Conv1d(hidden_size, hidden_size, 2, 1),
+                                    nn.BatchNorm1d(hidden_size),
+                                    nn.ReLU(),
+                                )
+                            ])
+                            
+                        else: ## 2, 4, 6 ...
+                            # self.convs.extend([
+                            #     nn.Sequential(
+                            #         nn.Conv1d(hidden_size, hidden_size, 2, 1),
+                            #         nn.BatchNorm1d(hidden_size),
+                            #         nn.ReLU(),
+                            #     )
+                            # ])
+                            self.convs.extend([nn.MaxPool1d(2, 1)])
+            ## with first conv1d
+            # if layer_idx == 0:
+            #     for order in range(layer_count):
+            #         if order == 0:
+            #             self.convs.extend([nn.Conv1d(hidden_size, hidden_size, 1, 1)])
+            #         else:
+            #             if (order % 2) != 0: ## 1, 3, 5 ...
+            #                 self.convs.extend([nn.MaxPool1d(2, 1)])
+                            
+            #             else: ## 2, 4, 6 ...
+            #                 self.convs.extend([
+            #                     nn.Sequential(
+            #                         nn.Conv1d(hidden_size, hidden_size, 2, 1),
+            #                         nn.BatchNorm1d(hidden_size),
+            #                         nn.ReLU(),
+            #                     )
+            #                 ])
 
             ## other layers 
             else: 
-                self.convs.extend([nn.MaxPool1d(3, 2)])
-                self.convs.extend([nn.Sequential(
-                    nn.Conv1d(hidden_size, hidden_size, 2, 1),
-                    nn.BatchNorm1d(hidden_size),
-                    nn.ReLU(),
-                ) for _ in range(layer_count-1)])            
+                for order in range(layer_count):
+                    if order == 0:
+                        #self.convs.extend([nn.Conv1d(hidden_size, hidden_size, 3, 2)])
+                        self.convs.extend([nn.MaxPool1d(3, 2)])
+                    
+                    else:    
+                        if (order % 2) != 0: ## 1, 3, 5 ...
+                            # self.convs.extend([nn.MaxPool1d(2, 1)])
+                            self.convs.extend([
+                                nn.Sequential(
+                                    nn.Conv1d(hidden_size, hidden_size, 2, 1),
+                                    nn.BatchNorm1d(hidden_size),
+                                    nn.ReLU(),
+                                )
+                            ])
+                        else: ## 2, 4, 6 ...
+                            # self.convs.extend([
+                            #     nn.Sequential(
+                            #         nn.Conv1d(hidden_size, hidden_size, 2, 1),
+                            #         nn.BatchNorm1d(hidden_size),
+                            #         nn.ReLU(),
+                            #     )
+                            # ])
+                            self.convs.extend([nn.MaxPool1d(2, 1)])
+                        
+                # self.convs.extend([nn.MaxPool1d(3, 2)])
+                # self.convs.extend([nn.Sequential(
+                #     nn.Conv1d(hidden_size, hidden_size, 2, 1),
+                #     nn.BatchNorm1d(hidden_size),
+                #     nn.ReLU(),
+                # ) for _ in range(layer_count-1)])            
 
-class SparsePropConv(nn.Module):
-    def __init__(self, counts, hidden_size):
-        super().__init__()
-        self.num_scale_layers = counts
-        self.hidden_size = hidden_size
-        # torch.nn.init.normal_(self.proj.weight, std=0.2)
-
-        self.convs = nn.ModuleList()
-        for layer_idx, layer_count in enumerate(self.num_scale_layers):
-            ## first layer
-            if layer_idx == 0:
-                self.convs.extend([nn.Sequential(
-                    nn.Conv1d(hidden_size, hidden_size, 2, 1),
-                    nn.BatchNorm1d(hidden_size),
-                    nn.ReLU(),
-                ) for _ in range(layer_count-1)])  
-
-            ## other layers 
-            else: 
-                self.convs.extend([nn.MaxPool1d(3, 2)])
-                self.convs.extend([nn.Sequential(
-                    nn.Conv1d(hidden_size, hidden_size, 2, 1),
-                    nn.BatchNorm1d(hidden_size),
-                    nn.ReLU(),
-                ) for _ in range(layer_count-1)])            
-      
     def forward(self, x):
         B, C, N = x.shape
         mask2d = torch.eye(N, N, device=x.device).bool()
@@ -181,11 +184,13 @@ class SparsePropConv(nn.Module):
         ## stride: interval of proposals to put on 2D map    
         accumulate_count = 0
         stride, offset = 1, 0
-        for level, count in enumerate(self.num_scale_layers): ## (0, 16),  (1, 8), (1, 8)
+        for level, count in enumerate(self.num_scale_layers): ## (0, 16), (1, 8), (2, 8)
             for order in range(count):
+                ## for no initial layer
                 if accumulate_count != 0:
                     x = self.convs[accumulate_count-1](x)
-               
+                #x = self.convs[accumulate_count](x)               
+
                 i = range(0, N - offset, stride)
                 j = range(offset, N, stride)
                 x2d[:, :, i, j] = x

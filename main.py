@@ -72,7 +72,7 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--grad_clip', default=5.0)
 @click.option('--step_gamma', default=0.1)
 # testing options
-@click.option('--test_batch_size', default=64)
+@click.option('--test_batch_size', default=48)
 @click.option('--nms_threshold', default=0.5)
 @click.option('--recall_Ns', 'recall_Ns', default=[1, 5, 10], multiple=True)
 @click.option('--recall_IoUs', 'recall_IoUs', default=[0.5, 0.7], multiple=True)
@@ -115,8 +115,8 @@ def subprocess(rank, world_size, temp_dir, config):
 
     if config.test_only:
         # testing
-        #testing_loop(config)
-        testing_loop_bbox_reg(config)        
+        testing_loop(config)
+        #testing_loop_bbox_reg(config)        
     else:
         # training
         #training_loop(config)

@@ -311,7 +311,7 @@ def train_epoch(
     model: torch.nn.Module,
     loader: torch.utils.data.DataLoader,
     optimizer: torch.optim.Optimizer,
-    loss_iou_fn: torch.nn.Module,
+    loss_conf_fn: torch.nn.Module,
     loss_con_fn: torch.nn.Module,
     epoch: int,
     config: AttrDict,
@@ -335,7 +335,7 @@ def train_epoch(
         iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])
 
         video_feats, sents_feats, logits2d, scores2ds, mask2d = model(**batch)
-        loss_iou = loss_iou_fn(logits2d, iou2d, mask2d)
+        loss_iou = loss_conf_fn(logits2d, iou2d, mask2d)
         if config.contrastive_weight != 0:
             loss_inter_video, loss_inter_query, loss_intra_video = loss_con_fn(
                 video_feats=video_feats,
@@ -479,7 +479,15 @@ def training_loop(config: AttrDict):
     )
 
     # loss functions
-    loss_iou_fn = ScaledIoULoss(config.min_iou, config.max_iou)
+    #loss_conf_fn = ScaledIoULoss(config.min_iou, config.max_iou)
+    ## testing focal loss
+    loss_conf_fn = ScaledIoUFocalLoss(
+                        min_iou=config.min_iou,
+                        max_iou=config.max_iou,
+                        scale=10,
+                        alpha=config.alpha,
+                        gamma=config.gamma,
+                    )
     loss_con_fn = ContrastiveLoss(
         T_v=config.tau_video,
         T_q=config.tau_query,
@@ -586,7 +594,7 @@ def training_loop(config: AttrDict):
             model = DistributedDataParallel(model, device_ids=[device])
 
         train_pred_moments, train_true_moments, train_losses = train_epoch(
-            model, train_loader, optimizer, loss_iou_fn, loss_con_fn, epoch,
+            model, train_loader, optimizer, loss_conf_fn, loss_con_fn, epoch,
             config)
         test_pred_moments, test_true_moments = test_epoch(
             model, test_loader, epoch, config)
@@ -788,23 +796,9 @@ def train_epoch_bbox_reg(
         batch = {key: value.to(device) for key, value in batch.items()}
         #iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips) # [M, N, N] for each target
         iou2ds = moments_to_rescaled_iou2ds(batch['tgt_moments'], config.num_clips) # [M, N, N] for each target
-        
         iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets']) # [S, N, N] for each sentence
 
         video_feats, sents_feats, logits2d, scores2ds, mask2d, bbox, scores1ds = model(**batch)
-        
-        # ## scores2ds, mask2d are .detach() in model, so out_moments should not compute gradient
-        # ## out_moments: [S, P, 2],  out_scores1ds: [S, P]  
-        # out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
-        
-        # ## add bbox_offset: [S, 2, N, N] to out_moments: [S, P, 2] 
-        # S, N, _ = scores2ds.shape
-        # bbox_offset_1ds = bbox_offset.masked_select(mask2d).view(S, 2, -1)  # [S, 2, P]
-        # bbox_offset_1ds = bbox_offset_1ds.permute(0, 2, 1)                  # [S, P, 2]
-        # #out_moments = out_moments + bbox_offset_1ds.tanh() * 1/N            # [S, P, 2]
-        # out_moments = out_moments + bbox_offset_1ds.tanh()                  # [S, P, 2]
-        # ## clamp start and end
-        # out_moments = torch.clamp(out_moments, min=0, max=1)                # [S, P, 2]
         
         ## nms
         ## out_moments.clone().detach() create a copy of out_moments that doesn't require grads
@@ -818,17 +812,7 @@ def train_epoch_bbox_reg(
         }
         true_moments_batch = dist.gather_dict(true_moments_batch, to_cpu=True)
         true_moments.append(true_moments_batch)
-        
-        ## confidence score
-        '''
-        loss_conf = loss_conf_fn(
-                        logits2d=logits2d, 
-                        iou2d=iou2d,
-                        iou2ds=iou2ds, 
-                        mask2d=mask2d,
-                        num_targets=batch['num_targets'],
-                    )
-        '''
+
         ## testing ScaledIoUFocaLoss with Rescaled IoU
         loss_conf = loss_conf_fn(logits2d, iou2d, mask2d)
         ## bbox regression score
@@ -1159,7 +1143,7 @@ def train_epoch_PE(
     model: torch.nn.Module,
     loader: torch.utils.data.DataLoader,
     optimizer: torch.optim.Optimizer,
-    loss_iou_fn: torch.nn.Module,
+    loss_conf_fn: torch.nn.Module,
     loss_pe_con_fn: torch.nn.Module,
     epoch: int,
     config: AttrDict,
@@ -1190,7 +1174,7 @@ def train_epoch_PE(
             scores2ds, 
             mask2d
         ) = model(**batch)
-        loss_iou = loss_iou_fn(logits2d, iou2d, mask2d)
+        loss_iou = loss_conf_fn(logits2d, iou2d, mask2d)
         if config.contrastive_weight != 0:
             loss_inter_video, loss_inter_query, loss_kl_constraint = loss_pe_con_fn(
                 video_feats=video_feats_mean,
@@ -1290,7 +1274,7 @@ def training_loop_PE(config: AttrDict):
     )
 
     # loss functions
-    loss_iou_fn = ScaledIoULoss(config.min_iou, config.max_iou)
+    loss_conf_fn = ScaledIoULoss(config.min_iou, config.max_iou)
     loss_pe_conv_fn = ProbEmbedContrastiveLoss(
         T_v=config.tau_video,
         T_q=config.tau_query,
@@ -1373,7 +1357,7 @@ def training_loop_PE(config: AttrDict):
             model = DistributedDataParallel(model, device_ids=[device])
 
         train_pred_moments, train_true_moments, train_losses = train_epoch_PE(
-            model, train_loader, optimizer, loss_iou_fn, loss_pe_conv_fn, epoch,
+            model, train_loader, optimizer, loss_conf_fn, loss_pe_conv_fn, epoch,
             config)
         test_pred_moments, test_true_moments, _ = test_epoch(
             model, test_loader, epoch, config)
