@@ -111,7 +111,6 @@ def calculate_APs_worker(
         APs = boost_calculate_APs(
             out_ious, out_tgts, mAP_ious, len(tgt_moments))
     except Exception as e:
-        raise e
         APs = []
         for mAP_iou in mAP_ious:
             tp_cnt = []
