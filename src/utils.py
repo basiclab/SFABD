@@ -1,15 +1,9 @@
 from typing import List, Union, Tuple, Dict
 
 import matplotlib.pyplot as plt
-## most GUI based backends require being run on main thread, which is
-## not always the case in multi-gpu training
-## so switch to backends that don't use GUI
-plt.switch_backend('agg')
-import seaborn as sns
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-
 import torch
 import torch.nn.functional as F
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 
 def iou(
@@ -192,99 +186,49 @@ def iou2ds_to_iou2d(
         start = end
     return torch.stack(iou2d, dim=0)
 
-'''
-## sns plot
-@torch.no_grad()
-def plot_moments_on_iou2d(iou2d, scores2d, moments, nms_moments, path, mask2d):
-    _, N = iou2d.shape
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(9, 4))
 
-    ticks = (torch.arange(0, N, 5) + 0.5).numpy()
-    ticklabels = [f"{idx:d}" for idx in range(0, N, 5)]
-
-    # plot iou2d and nms_moments on left subplot
-    annot = [["" for _ in range(N)] for _ in range(N)]
-    for i, (st, ed) in enumerate(nms_moments):
-        annot[st][ed - 1] = f"{i+1:d}"
-    sns.heatmap(
-        ax=ax1,
-        data=iou2d.numpy(),
-        annot=annot,
-        mask=~mask2d.numpy(),
-        vmin=0, vmax=1, cmap="plasma", fmt="s", linewidths=0.5, square=True,
-        annot_kws={"ha": "center", "va": "center_baseline"})
-    ax1.set_title("Groundtruth IoU and Predicted Moments")
-
-    # plot scores2d and groundtruth moment on right subplot
-    annot = [["" for _ in range(N)] for _ in range(N)]
-    annot[moment[0]][moment[1] - 1] = "x"
-    sns.heatmap(
-        ax=ax2,
-        data=scores2d.numpy(),
-        annot=annot,
-        mask=~mask2d.numpy(),
-        vmin=0, vmax=1, cmap="plasma", fmt="s", linewidths=0.5, square=True,
-        annot_kws={"ha": "center", "va": "center_baseline"})
-    ax2.set_title("Scores and Groundtruth Moment")
-
-    for ax in [ax1, ax2]:
-        # xlabel and xticks on top
-        ax.set_facecolor("lightgray")
-        ax.set_xlabel(r"End Time$\rightarrow$", loc='left', fontsize=10)
-        ax.set_ylabel(r"$\leftarrow$Start Time", loc='top', fontsize=10)
-        ax.set_xticks(ticks, ticklabels)
-        ax.set_yticks(ticks, ticklabels, rotation='horizontal')
-        ax.tick_params(labelbottom=False, labeltop=True, bottom=False, top=True)
-        ax.xaxis.set_label_position('top')
-
-    fig.tight_layout()
-    fig.savefig(path, bbox_inches='tight')
-    plt.close(fig)
-'''
-
-
-## matplotlib plot
+# matplotlib plot
 @torch.no_grad()
 def plot_moments_on_iou2d(
-    iou2d: torch.Tensor,        ## [N, N]
-    scores2d: torch.Tensor,     ## [N, N]
-    nms_moments: torch.Tensor,  ## [num_proposals_after_nms, 2]
+    iou2d: torch.Tensor,        # [N, N]
+    scores2d: torch.Tensor,     # [N, N]
+    nms_moments: torch.Tensor,  # [num_proposals_after_nms, 2]
     path: str,
 ):
     _, N = iou2d.shape  # N: num_clips
 
     fig, axs = plt.subplots(1, 2, figsize=(10, 5.5))
-    offset = torch.ones(N, N).triu()*0.05 ## for better visualization
+    offset = torch.ones(N, N).triu() * 0.05     # for better visualization
     cm = plt.cm.get_cmap('Reds')
 
-    ## plot predicted 2d map score
-    scores2d_plot = axs[0].imshow(scores2d+offset, cmap=cm, vmin=0.0, vmax=1.0)
+    # plot predicted 2d map score
+    scores2d_plot = axs[0].imshow(scores2d + offset, cmap=cm, vmin=0.0, vmax=1.0)
     axs[0].set(xlabel='end index', ylabel='start index')
     axs[0].set_title("score2d")
     divider = make_axes_locatable(axs[0])
     cax = divider.append_axes("right", size="5%", pad=0.1)
     plt.colorbar(scores2d_plot, cax=cax)
 
-    ## not working?
-    ## plot top 10 nms_moments on both plot
+    # not working?
+    # plot top 10 nms_moments on both plot
     for i, (row, col) in enumerate(nms_moments[0:10]):
-        rect = plt.Rectangle((col-0.5, row-0.5), 1, 1,
-                            fill=False, color='green', linewidth=1.5)
+        rect = plt.Rectangle((col - 0.5, row - 0.5), 1, 1,
+                             fill=False, color='green', linewidth=1.5)
         axs[0].add_patch(rect)
 
-    ## plot gt 2d map
-    iou2d = iou2d.sub(0.5).div(1.0 - 0.5).clamp(0, 1)   ## re-scale iou2d
-    gt_plot = axs[1].imshow(iou2d+offset, cmap=cm, vmin=0.0, vmax=1.0)
+    # plot gt 2d map
+    iou2d = iou2d.sub(0.5).div(1.0 - 0.5).clamp(0, 1)   # re-scale iou2d
+    gt_plot = axs[1].imshow(iou2d + offset, cmap=cm, vmin=0.0, vmax=1.0)
     axs[1].set(xlabel='end index', ylabel='start index')
     axs[1].set_title(f"GT")
     divider = make_axes_locatable(axs[1])
     cax = divider.append_axes("right", size="5%", pad=0.1)
     plt.colorbar(gt_plot, cax=cax)
 
-    ## plot top 10 nms_moments on both plot
+    # plot top 10 nms_moments on both plot
     for i, (row, col) in enumerate(nms_moments[0:10]):
-        rect = plt.Rectangle((col-0.5, row-0.5), 1, 1,
-                            fill=False, color='green', linewidth=1.5)
+        rect = plt.Rectangle((col - 0.5, row - 0.5), 1, 1,
+                             fill=False, color='green', linewidth=1.5)
         axs[1].add_patch(rect)
 
     fig.tight_layout()
@@ -294,29 +238,29 @@ def plot_moments_on_iou2d(
 
 @torch.no_grad()
 def plot_iou2d_and_rescaled_iou2d(
-    iou2d: torch.Tensor,            ## [N, N]
-    rescaled_iou2d: torch.Tensor,   ## [N, N]
+    iou2d: torch.Tensor,            # [N, N]
+    rescaled_iou2d: torch.Tensor,   # [N, N]
     path: str,
 ):
     _, N = iou2d.shape  # N: num_clips
 
     fig, axs = plt.subplots(1, 2, figsize=(10, 5.5))
-    offset = torch.ones(N, N).triu()*0.05 ## for better visualization
-    #cm = plt.cm.get_cmap('Reds')
+    offset = torch.ones(N, N).triu() * 0.05             # for better visualization
+    # cm = plt.cm.get_cmap('Reds')
     cm = matplotlib.colormaps.get_cmap('Reds')
 
-    ## plot gt 2d map
-    iou2d = iou2d.sub(0.5).div(1.0 - 0.5).clamp(0, 1)   ## re-scale iou2d
-    iou_plot = axs[0].imshow(iou2d+offset, cmap=cm, vmin=0.0, vmax=1.0)
+    # plot gt 2d map
+    iou2d = iou2d.sub(0.5).div(1.0 - 0.5).clamp(0, 1)   # re-scale iou2d
+    iou_plot = axs[0].imshow(iou2d + offset, cmap=cm, vmin=0.0, vmax=1.0)
     axs[0].set(xlabel='end index', ylabel='start index')
     axs[0].set_title(f"iou2d")
     divider = make_axes_locatable(axs[0])
     cax = divider.append_axes("right", size="5%", pad=0.1)
     plt.colorbar(iou_plot, cax=cax)
 
-    ## plot rescaled 2d map
-    rescaled_iou2d = rescaled_iou2d.sub(0.5).div(1.0 - 0.5).clamp(0, 1)   ## re-scale iou2d
-    rescaled_iou_plot = axs[1].imshow(rescaled_iou2d+offset, cmap=cm, vmin=0.0, vmax=1.0)
+    # plot rescaled 2d map
+    rescaled_iou2d = rescaled_iou2d.sub(0.5).div(1.0 - 0.5).clamp(0, 1)     # re-scale iou2d
+    rescaled_iou_plot = axs[1].imshow(rescaled_iou2d + offset, cmap=cm, vmin=0.0, vmax=1.0)
     axs[1].set(xlabel='end index', ylabel='start index')
     axs[1].set_title(f"rescaled iou2d")
     divider = make_axes_locatable(axs[1])
@@ -324,34 +268,34 @@ def plot_iou2d_and_rescaled_iou2d(
     plt.colorbar(rescaled_iou_plot, cax=cax)
 
     fig.tight_layout()
-    #plt.show()
+    # plt.show()
     fig.savefig(path, bbox_inches='tight')
     plt.close(fig)
 
+
 @torch.no_grad()
 def plot_mask_and_gt(
-    iou2d: torch.Tensor,        ## [N, N]
-    mask2d: torch.Tensor,       ## [N, N]
+    iou2d: torch.Tensor,    # [N, N]
+    mask2d: torch.Tensor,   # [N, N]
     path: str,
 ):
     _, N = iou2d.shape  # N: num_clips
 
     fig, axs = plt.subplots(1, 2, figsize=(10, 5.5))
-    offset = torch.ones(N, N).triu()*0.05 ## for better visualization
+    offset = torch.ones(N, N).triu() * 0.05     # for better visualization
     cm = plt.cm.get_cmap('Reds')
 
-    ## plot predicted 2d map score
-    scores2d_plot = axs[0].imshow(mask2d+offset, cmap=cm, vmin=0.0, vmax=1.0)
+    # plot predicted 2d map score
+    scores2d_plot = axs[0].imshow(mask2d + offset, cmap=cm, vmin=0.0, vmax=1.0)
     axs[0].set(xlabel='end index', ylabel='start index')
     axs[0].set_title("mask")
     divider = make_axes_locatable(axs[0])
     cax = divider.append_axes("right", size="5%", pad=0.1)
     plt.colorbar(scores2d_plot, cax=cax)
 
-
-    ## plot gt 2d map
-    iou2d = iou2d.sub(0.5).div(1.0 - 0.5).clamp(0, 1)   ## re-scale iou2d
-    gt_plot = axs[1].imshow(iou2d+offset, cmap=cm, vmin=0.0, vmax=1.0)
+    # plot gt 2d map
+    iou2d = iou2d.sub(0.5).div(1.0 - 0.5).clamp(0, 1)   # re-scale iou2d
+    gt_plot = axs[1].imshow(iou2d + offset, cmap=cm, vmin=0.0, vmax=1.0)
     axs[1].set(xlabel='end index', ylabel='start index')
     axs[1].set_title(f"GT")
     divider = make_axes_locatable(axs[1])
@@ -368,18 +312,18 @@ def l2_normalize(tensor, axis=-1):
     return F.normalize(tensor, p=2, dim=axis)
 
 
-## last dim must be hidden_size C
+# last dim must be hidden_size C
 def sample_gaussian_tensors(
-    mu: torch.Tensor,       # [..., C]
-    logsigma: torch.Tensor, # [..., C]
-    num_samples: int=7,
-) -> torch.Tensor:          # [..., num_samples, C]
-    repeat_shape_list = [1 for i in range(len(mu.shape)+1)]     # [1, 1, ... 1, 1]
-    repeat_shape_list[len(repeat_shape_list)-2] = num_samples   # [1, 1, ... num_samples, 1]
-    new_shape = torch.zeros_like(mu).unsqueeze(-2).repeat(repeat_shape_list).shape      ## [.., num_samples, C]
-    sampled_normal_vector = torch.randn(new_shape, dtype=mu.dtype, device=mu.device)    ## [.., num_samples, C]
+    mu: torch.Tensor,           # [..., C]
+    logsigma: torch.Tensor,     # [..., C]
+    num_samples: int = 7,
+) -> torch.Tensor:              # [..., num_samples, C]
+    repeat_shape_list = [1 for i in range(len(mu.shape) + 1)]                           # [1, 1, ... 1, 1]
+    repeat_shape_list[len(repeat_shape_list) - 2] = num_samples                         # [1, 1, ... num_samples, 1]
+    new_shape = torch.zeros_like(mu).unsqueeze(-2).repeat(repeat_shape_list).shape      # [.., num_samples, C]
+    sampled_normal_vector = torch.randn(new_shape, dtype=mu.dtype, device=mu.device)    # [.., num_samples, C]
     sampled_feats = sampled_normal_vector.mul(torch.exp(logsigma.unsqueeze(-2))).add_(mu.unsqueeze(-2))
-    return sampled_feats  ## not normalized
+    return sampled_feats    # not normalized
 
 
 if __name__ == '__main__':
@@ -388,47 +332,24 @@ if __name__ == '__main__':
 
     num_clips = 64
     num_targets = torch.tensor([3, 4])
-    #moments = torch.rand(num_targets.sum(), 2).sort(dim=1).values
-    moments = torch.Tensor([[0.1, 0.11],
-                            [0.27, 0.3],
-                            [0.5, 0.9],
-                            [0.5, 0.52],
-                            [0.6, 0.63],
-                            [0.9, 0.92],
-                            [0.3, 0.45],])
+    # moments = torch.rand(num_targets.sum(), 2).sort(dim=1).values
+    moments = torch.Tensor([
+        [0.1, 0.11],
+        [0.27, 0.3],
+        [0.5, 0.9],
+        [0.5, 0.52],
+        [0.6, 0.63],
+        [0.9, 0.92],
+        [0.3, 0.45],
+    ])
     iou2ds = moments_to_iou2ds(moments, num_clips)
     rescaled_iou2ds = moments_to_rescaled_iou2ds(moments, num_clips)
 
     iou2d = iou2ds_to_iou2d(iou2ds, num_targets)
     rescaled_iou2d = iou2ds_to_iou2d(rescaled_iou2ds, num_targets)
 
-    #for i, (iou2ds_i, rescaled_iou2ds_i) in enumerate(zip(iou2ds, rescaled_iou2ds)):
+    # for i, (iou2ds_i, rescaled_iou2ds_i) in enumerate(zip(iou2ds, rescaled_iou2ds)):
     #    plot_iou2d_and_rescaled_iou2d(iou2ds_i, rescaled_iou2ds_i, f'./{i}.jpg')
 
     for i, (iou2d_i, rescaled_iou2d_i) in enumerate(zip(iou2d, rescaled_iou2d)):
         plot_iou2d_and_rescaled_iou2d(iou2d_i, rescaled_iou2d_i, f'./{i}.jpg')
-
-
-    '''
-    # test moments_to_iou2ds
-    for _ in range(10):
-        num_targets = torch.tensor([1, 2, 3, 4])
-        moments = torch.rand(num_targets.sum(), 2).sort(dim=1).values
-        iou2ds = moments_to_iou2ds(moments, num_clips)
-        rescaled_iou2ds = moments_to_rescaled_iou2ds(moments, num_clips)
-
-        iou2d = iou2ds_to_iou2d(iou2ds, num_targets)
-        rescaled_iou2d = iou2ds_to_iou2d(rescaled_iou2ds, num_targets)
-
-        assert torch.allclose(iou2d[0], iou2ds[0])
-        assert torch.allclose(iou2d[1], iou2ds[1:3].max(dim=0).values)
-        assert torch.allclose(iou2d[2], iou2ds[3:6].max(dim=0).values)
-        assert torch.allclose(iou2d[3], iou2ds[6:10].max(dim=0).values)
-
-    # test nms
-    for _ in range(10):
-        scores2ds = torch.rand(16, num_clips, num_clips)
-        mask2d = (torch.rand(num_clips, num_clips) > 0.5).triu()
-        out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
-        pred_moments2 = nms(out_moments, out_scores1ds, threshold=0.3)
-    '''

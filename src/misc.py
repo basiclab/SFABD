@@ -76,12 +76,12 @@ def print_table(
             rows_width[i] = max(rows_width[i], len(row_str[i]))
         rows_str.append(row_str)
 
-    sep = '+' + '+'.join('-' * (w + 2) for w in rows_width) + '+'
+    sep = '+' + '+'.join('-' * (w) for w in rows_width) + '+'
     print(sep)
     for row_str in rows_str:
         print('|', end='')
         for width, cell in zip(rows_width, row_str):
-            print(cell.center(width + 2), end='|')
+            print(cell.center(width), end='|')
         print("\n" + sep)
 
 

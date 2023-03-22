@@ -150,9 +150,6 @@ def calculate_mAPs(
 
     # buffer for all samples
     calc_buffer = []
-    # buffer for single-target and multi-target samples
-    calc_buffer_single = []
-    calc_buffer_multi = []
     # buffer for short/medium/long clips
     calc_buffer_short = []
     calc_buffer_medium = []
@@ -167,22 +164,6 @@ def calculate_mAPs(
             out_moments[shift_p: shift_p + num_p],
             out_scores1ds[shift_p: shift_p + num_p],
         ])
-
-        if num_t == 1:
-            # single-target
-            calc_buffer_single.append([
-                sample_tgt_moments,
-                out_moments[shift_p: shift_p + num_p],
-                out_scores1ds[shift_p: shift_p + num_p],
-            ])
-
-        else:
-            # multi-target
-            calc_buffer_multi.append([
-                sample_tgt_moments,
-                out_moments[shift_p: shift_p + num_p],
-                out_scores1ds[shift_p: shift_p + num_p],
-            ])
 
         # short/medium/long
         tgt_length = sample_tgt_moments[:, 1] - sample_tgt_moments[:, 0]

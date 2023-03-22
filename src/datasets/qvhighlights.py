@@ -24,7 +24,7 @@ class QVHighlights(CollateBase):
         assert len(self.feat_dirs) == len(self.fallback_feat_dir)
 
     def get_feat_dim(self):
-        return 2816  ## slowfast: 2304 + clip: 512
+        return 2816     # slowfast: 2304 + clip: 512
 
     # override
     def get_feat(self, anno):
@@ -47,7 +47,7 @@ class QVHighlights(CollateBase):
         return feats
 
 
-class QVHighlights2s(QVHighlights):
+class QVHighlights(QVHighlights):
     def __init__(self, ann_file):
         super().__init__(
             ann_file,
@@ -58,42 +58,16 @@ class QVHighlights2s(QVHighlights):
         )
 
 
-class QVHighlightsTrain2s(QVHighlights2s):
+class QVHighlightsTrain(QVHighlights):
     def __init__(self):
         super().__init__(ann_file="./data/QVHighlights/train.json")
 
 
-class QVHighlightsVal2s(QVHighlights2s):
+class QVHighlightsVal(QVHighlights):
     def __init__(self):
         super().__init__(ann_file="./data/QVHighlights/val.json")
 
 
-class QVHighlightsTest2s(QVHighlights2s):
-    def __init__(self):
-        super().__init__(ann_file="./data/QVHighlights/test.json")
-
-
-class QVHighlights1s(QVHighlights):
-    def __init__(self, ann_file):
-        super().__init__(
-            ann_file,
-            feat_dirs=[
-                './data/QVHighlights/features_1s/clip_features/',
-                './data/QVHighlights/features_1s/slowfast_features/',
-            ]
-        )
-
-
-class QVHighlightsTrain1s(QVHighlights1s):
-    def __init__(self):
-        super().__init__(ann_file="./data/QVHighlights/train.json")
-
-
-class QVHighlightsVal1s(QVHighlights1s):
-    def __init__(self):
-        super().__init__(ann_file="./data/QVHighlights/val.json")
-
-
-class QVHighlightsTest1s(QVHighlights1s):
+class QVHighlightsTest(QVHighlights):
     def __init__(self):
         super().__init__(ann_file="./data/QVHighlights/test.json")

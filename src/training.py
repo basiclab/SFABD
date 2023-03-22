@@ -4,7 +4,6 @@ from collections import defaultdict
 
 import torch
 from tensorboardX import SummaryWriter
-import torch.nn.functional as F
 from torch import optim
 from torch.nn import SyncBatchNorm
 from torch.nn.utils import clip_grad_norm_

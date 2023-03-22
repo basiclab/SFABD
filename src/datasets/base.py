@@ -124,8 +124,12 @@ class CollateBase(torch.utils.data.Dataset):
 if __name__ == '__main__':
     from torch.utils.data import DataLoader
 
-    from src.datasets.charades import Charades
-    from src.datasets.qvhighlights import QVHighlights
+    from src.datasets.charades import (
+        CharadesMultitargetTrain, CharadesMultitargetTest,
+        CharadesSTATrain, CharadesSTATest)
+    from src.datasets.qvhighlights import QVHighlightsTrain, QVHighlightsVal
+    from src.datasets.activitynet import (
+        ActivityNetTrain, ActivityNetVal, ActivityNetTest)
 
     def test(dataset: CollateBase):
         def show_dict(data):
@@ -162,49 +166,37 @@ if __name__ == '__main__':
         print('-' * 80)
 
     print("Charades-STA train")
-    dataset = Charades(
-        ann_file='data/CharadesSTA/train.json',
-        feat_file="./data/CharadesSTA/vgg_rgb_features.hdf5",
-        num_init_clips=32,
-    )
+    dataset = CharadesSTATrain()
     test(dataset)
 
     print("Charades-STA test")
-    dataset = Charades(
-        ann_file='data/CharadesSTA/test.json',
-        feat_file="./data/CharadesSTA/vgg_rgb_features.hdf5",
-        num_init_clips=32,
-    )
+    dataset = CharadesSTATest()
     test(dataset)
 
     print("Charades-STA Multitarget train")
-    dataset = Charades(
-        ann_file='data/CharadesSTA/train_multitarget.json',
-        feat_file="./data/CharadesSTA/Charades_C3D.hdf5",
-        num_init_clips=32,
-    )
+    dataset = CharadesMultitargetTrain()
     test(dataset)
 
     print("Charades-STA Multitarget test")
-    dataset = Charades(
-        ann_file='data/CharadesSTA/test_multitarget.json',
-        feat_file="./data/CharadesSTA/Charades_C3D.hdf5",
-        num_init_clips=32,
-    )
+    dataset = CharadesMultitargetTest()
     test(dataset)
 
     print("QVHighlight train")
-    dataset = QVHighlights(
-        ann_file='data/QVHighlights/train.json',
-        feat_file="./data/QVHighlights/QVHighlights_C3D.hdf5",
-        num_init_clips=256,
-    )
+    dataset = QVHighlightsTrain()
     test(dataset)
 
     print("QVHighlight val")
-    dataset = QVHighlights(
-        ann_file='data/QVHighlights/val.json',
-        feat_file="./data/QVHighlights/QVHighlights_C3D.hdf5",
-        num_init_clips=256,
-    )
+    dataset = QVHighlightsVal()
+    test(dataset)
+
+    print("ActivityNet train")
+    dataset = ActivityNetTrain()
+    test(dataset)
+
+    print("ActivityNet val")
+    dataset = ActivityNetVal()
+    test(dataset)
+
+    print("ActivityNet test")
+    dataset = ActivityNetTest()
     test(dataset)
