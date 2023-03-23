@@ -45,5 +45,5 @@
     "nms_threshold": 0.5,
     "recall_Ns": [1, 5],
     "recall_IoUs": [0.5, 0.7],
-    "logdir": "./logs/qvhighlights-iou-inter"
+    "logdir": "./logs/qvhighlights-iou"
 }
