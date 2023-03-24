@@ -41,7 +41,7 @@ class ActivityNet(CollateBase):
                     video_data['timestamps'], video_data['sentences']):
                 timestamp = torch.Tensor(timestamp)
                 timestamp = torch.clamp(timestamp / duration, 0, 1)
-                if timestamp[0] <= timestamp[1]:
+                if timestamp[0] < timestamp[1]:
                     sentences.append(sentence)
                     tgt_moments.append(timestamp.view(1, 2))
                     num_targets.append(torch.tensor(1))
