@@ -75,25 +75,6 @@ def con_scores(
     return scores2d
 
 
-def initialize_weights(model):
-    for m in model.modules():
-        if isinstance(m, nn.Conv1d):
-            torch.nn.init.xavier_normal_(m.weight.data)
-            # torch.nn.init.xavier_uniform_(m.weight.data)
-            # torch.nn.init.kaiming_normal_(m.weight.data)
-            # torch.nn.init.kaiming_uniform_(m.weight.data)
-        elif isinstance(m, nn.Conv2d):
-            torch.nn.init.xavier_normal_(m.weight.data)
-            # torch.nn.init.xavier_uniform_(m.weight.data)
-            # torch.nn.init.kaiming_normal_(m.weight.data)
-            # torch.nn.init.kaiming_uniform_(m.weight.data)
-        elif isinstance(m, nn.Linear):
-            torch.nn.init.xavier_normal_(m.weight.data)
-            # torch.nn.init.xavier_uniform_(m.weight.data)
-            # torch.nn.init.kaiming_normal_(m.weight.data)
-            # torch.nn.init.kaiming_uniform_(m.weight.data)
-
-
 class MMN(nn.Module):
     def __init__(
         self,
@@ -137,9 +118,6 @@ class MMN(nn.Module):
         )
 
         self.sents_model = LanguageModel(joint_space_size, dual_space)                   # [S, C]
-
-        # initialize weight
-        # initialize_weights(self)
 
     def forward(
         self,
@@ -234,9 +212,6 @@ class MMN_bbox_reg(nn.Module):
 
         # bbox offset module
         self.bbox_offset_head = BboxRegression(joint_space_size)
-
-        # initialize weight
-        # initialize_weights(self)
 
     def forward(
         self,
