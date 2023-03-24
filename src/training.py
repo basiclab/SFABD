@@ -127,7 +127,7 @@ def train_epoch(
             mask2d=mask2d,
         )
 
-        if epoch < config.intra_start_epoch:
+        if epoch < config.intra_start:
             inter_weight = config.inter_weight
             intra_weight = 0
         else:
