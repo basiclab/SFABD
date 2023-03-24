@@ -36,7 +36,7 @@
     "base_lr": 8e-4,
     "bert_lr": 8e-5,
     "batch_size": 48,
-    "epochs": 10,
+    "epochs": 18,
     "milestones": [8],
     "step_gamma": 0.1,
     "grad_clip": 5.0,

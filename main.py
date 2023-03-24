@@ -34,8 +34,8 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--min_iou', default=0.5)
 @click.option('--max_iou', default=1.0)
 @click.option('--iou_weight', default=1.0)
-@click.option('--iou_threshold', default=0.75)
 # bbox regression loss
+@click.option('--iou_threshold', default=0.75)
 @click.option('--bbox_reg_weight', default=1.0)
 # contrastive loss
 @click.option('--tau_video', default=0.1)
@@ -44,11 +44,9 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--pos_iou', default=0.9)
 @click.option('--pos_topk', default=1)
 @click.option('--margin', default=0.3)
-@click.option('--inter/--no-inter', default=True)
-@click.option('--intra/--no-intra', default=True)
-@click.option('--intra_start_epoch', default=0)
-@click.option('--contrastive_weight', default=1.0)
-@click.option('--contrastive_weight_decay', default=0.01)
+@click.option('--intra_start', default=0)
+@click.option('--contrastive_decay', default=0.01)
+@click.option('--contrastive_decay_start', default=7)
 @click.option('--inter_weight', default=1)
 @click.option('--intra_weight', default=0.1)
 # optimizer
@@ -58,7 +56,6 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--batch_size', default=24)
 @click.option('--epochs', default=18)
 @click.option('--bert_freeze_epoch', default=4)
-@click.option('--contrastive_decay_start', default=7)
 @click.option('--grad_clip', default=5.0)
 @click.option('--step_gamma', default=0.1)
 # testing options
