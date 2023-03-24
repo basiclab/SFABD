@@ -4,6 +4,7 @@ import torch.nn.functional as F
 
 from src.utils import batch_iou, batch_diou, sample_gaussian_tensors, plot_mask_and_gt
 
+
 class ScaledIoULoss(nn.Module):
     def __init__(self, min_iou, max_iou):
         super().__init__()
@@ -32,12 +33,13 @@ class ScaledIoULoss(nn.Module):
         iou1d = self.linear_scale(iou1d)                        # [S, P]
         loss = F.binary_cross_entropy_with_logits(logits1d, iou1d)
         return loss
-    
+
+
 class ScaledIoUFocalLoss(nn.Module):
     def __init__(
-        self, 
-        min_iou: float, 
-        max_iou: float, 
+        self,
+        min_iou: float,
+        max_iou: float,
         scale: float,
         alpha: float,
         gamma: float,
@@ -70,21 +72,22 @@ class ScaledIoUFocalLoss(nn.Module):
         scores1d = torch.sigmoid(logits1d * self.scale)         # [S, P]
         iou1d = iou2d.masked_select(mask2d).view(S, -1)         # [S, P]
         iou1d = self.linear_scale(iou1d)                        # [S, P]
-        
+
         ## focal loss
         ## - (y * a * (1-p)^r * log(p) + (1-y) * (1-a) * p^r * log(1-p))
         y = iou1d
         p = scores1d
-        loss = - (y * self.alpha * torch.pow((1-p), self.gamma) * torch.log(p)  
+        loss = - (y * self.alpha * torch.pow((1-p), self.gamma) * torch.log(p)
                 + (1-y) * (1-self.alpha) * torch.pow(p, self.gamma) * torch.log(1-p))   ## [S, P]
         loss = loss.mean()
-        
+
         return loss
+
 
 ## fore/background binary classification
 class ConfidenceLoss(nn.Module):
     def __init__(
-        self, 
+        self,
         iou_threshold: float = 0.75
     ):
         super().__init__()
@@ -111,7 +114,7 @@ class ConfidenceLoss(nn.Module):
         logits1d = logits2d.masked_select(mask2d).view(S, -1)   # [S, P]
         iou1d = iou2d.masked_select(mask2d).view(S, -1)         # [S, P]
         P = iou1d.shape[1]
-        
+
         ## select top1 for each targets
         iou1ds = iou2ds.masked_select(mask2d).view(M, -1)       # [M, P]
         top1_idxs = iou1ds.topk(1, dim=1)[1]                    # [M, 1]
@@ -122,13 +125,14 @@ class ConfidenceLoss(nn.Module):
                 top1_prop_idx = int(top1_idxs[target_count + i])
                 target[sent_idx, top1_prop_idx] = 1
             target_count += num_target
-        
+
         ## select proposals with > IoU threshold as foreground
         target[iou1d > self.iou_threshold] = 1                  # foregrounds are 1
-        
+
         loss = F.binary_cross_entropy_with_logits(logits1d, target)
-        
+
         return loss
+
 
 ## Bbox IoU loss between pred bbox and gt bbox
 class BboxRegressionLoss(nn.Module):
@@ -138,7 +142,7 @@ class BboxRegressionLoss(nn.Module):
     ):
         super().__init__()
         self.iou_threshold = iou_threshold
-    
+
     def forward(
         self,
         out_moments: torch.Tensor,  # [S, P, 2]
@@ -160,7 +164,7 @@ class BboxRegressionLoss(nn.Module):
         ## [M, P, 2],  [M, 1, 2] -> [M, P, 1]
         bbox_iou = batch_diou(out_moments, tgt_moments.unsqueeze(1))# [M, P, 1]
         bbox_iou = bbox_iou.squeeze()                               # [M, P]
-        
+
         ## create mask to find responsible anchors for each target
         ## select top1 for each M targets
         iou1ds = iou2ds.masked_select(mask2d).view(M, -1)           # [M, P]
@@ -168,18 +172,18 @@ class BboxRegressionLoss(nn.Module):
         top1_idxs = iou1ds.topk(1, dim=1)[1]                        # [M, 1]
         target_mask = torch.zeros(M, P, device=device)              # [M, P]
         target_mask[range(M), top1_idxs.squeeze()] = 1
-        
+
         ## select anchors with GT_IoU > IoU_threshold
         target_mask[iou1ds > self.iou_threshold] = 1                # foregrounds are 1
-        
+
         ## compute loss for all anchors bbox prediction
         loss = 1 - bbox_iou                                         # [M, P]
 
         ## compute avg loss only anchors with target_mask = 1
-        loss = (loss * target_mask).sum() / target_mask.sum()                        
+        loss = (loss * target_mask).sum() / target_mask.sum()
 
         return loss
-    
+
 
 class ContrastiveLoss(nn.Module):
     def __init__(
@@ -288,10 +292,9 @@ class ContrastiveLoss(nn.Module):
                 self.T_v,
                 self.margin,
             )
-            
+
         else:
             loss_inter_video = torch.tensor(0., device=device)
-
 
         if self.inter:
             # === inter query (sentence -> all video proposals)
@@ -310,7 +313,7 @@ class ContrastiveLoss(nn.Module):
             assert pos_mask.long().sum(dim=-1).eq(P).all()
 
             s2v_pos_mask = iou2d > self.neg_iou                     # [S, P]
-            
+
             '''
             ###### for top1 pos sample selection
             ## to do: at least choose top 1 for each target as pos
@@ -321,20 +324,20 @@ class ContrastiveLoss(nn.Module):
             for idx, num_target in enumerate(num_targets):          # [S]
                 for i in range(num_target):
                     top1_prop_idx = int(top1_idxs[target_count + i])
-                    top1_pos_mask[idx, top1_prop_idx] = 1             
+                    top1_pos_mask[idx, top1_prop_idx] = 1
                 target_count += num_target
             ## top1_pos_mask:   [S, P], top1 proposal is 1, others are 0
             ## element-wise or, make sure that top1 proposal with IoU < 0.5 is also pos sample
             s2v_pos_mask = torch.logical_or(s2v_pos_mask, top1_pos_mask)    # [S, P]
             ######
             '''
-            
+
             ## for indexing, but how to write this in a better way?
             backup_pos_mask = pos_mask.clone()                      # [S, B * P]
-            pos_mask[backup_pos_mask] = s2v_pos_mask.view(-1)       # [S, B * P] 
+            pos_mask[backup_pos_mask] = s2v_pos_mask.view(-1)       # [S, B * P]
             inter_query_neg_mask = ~pos_mask.unsqueeze(1)           # [S, 1, B * P]
-            
-            
+
+
             ###### for neg sample selection
             '''
             ## don't choose lower-left corner as neg samples
@@ -359,7 +362,7 @@ class ContrastiveLoss(nn.Module):
                             if s <= e and (e+1-s) > int(gt_len*0.0):
                                 ## lower-left corner set to 0
                                 lower_left_mask[idx, s, e] = 0
-                    
+
                 target_count += num_target
 
             ## lower-left: 0, others: 1
@@ -370,7 +373,7 @@ class ContrastiveLoss(nn.Module):
             ## don't choose the lower-left corner as negative samples
             s2v_neg_mask = torch.logical_and(s2v_neg_mask, lower_left_mask)         # [S, P]
             inter_query_neg_mask[backup_pos_mask.unsqueeze(1)] = s2v_neg_mask.view(-1)
-            
+
 
             ## build lower-left mask [S, N, N]
             lower_left_mask = torch.ones(S, N, N, device=device)
@@ -386,7 +389,7 @@ class ContrastiveLoss(nn.Module):
                             if s <= e and (e+1-s) > int(gt_len*0.0):
                                 ## lower-left corner set to 0
                                 lower_left_mask[idx, s, e] = 0
-                    
+
                 target_count += num_target
 
             ## lower-left: 0, others: 1
@@ -398,7 +401,7 @@ class ContrastiveLoss(nn.Module):
             s2v_neg_mask = torch.logical_and(s2v_neg_mask, lower_left_mask)         # [S, P]
             inter_query_neg_mask[backup_pos_mask.unsqueeze(1)] = s2v_neg_mask.view(-1)
             '''
-            
+
             loss_inter_query = self.log_cross_entropy(
                 inter_query_pos,                                    # [M, K]
                 inter_query_all[scatter_m2s],                       # [M, 1, B * P]
@@ -420,7 +423,7 @@ class ContrastiveLoss(nn.Module):
             neg_mask2d[mask2d] = s2v_neg_mask.long()[0].cpu()
             original_neg_mask2d = torch.zeros(N, N, dtype=torch.long)
             original_neg_mask2d[mask2d] = original_s2v_neg_mask.long()[0].cpu()
-            
+
             plot_mask_and_gt(gt_iou2d, pos_mask2d, path="./logs/pos.jpg")
             plot_mask_and_gt(gt_iou2d, neg_mask2d, path="./logs/neg.jpg")
             plot_mask_and_gt(gt_iou2d, original_neg_mask2d, path="./logs/original_neg.jpg")
@@ -438,7 +441,7 @@ class ContrastiveLoss(nn.Module):
             scatter_e2s = []
             for i, num in enumerate(num_targets):
                 ## only for multi-target samples
-                if num > 1: 
+                if num > 1:
                     pairs = torch.ones(
                         num * K, num * K, device=device).nonzero()      # [num * K * num * K, 2]
                     combinations.append(pairs + shift)
@@ -457,14 +460,14 @@ class ContrastiveLoss(nn.Module):
                 pos_video_feats[pos_idx],                           # [E, C]
             ).sum(dim=1)                                            # [E]
 
-            ## all moment M x all proposals P from corresponding video 
+            ## all moment M x all proposals P from corresponding video
             intra_video_all = torch.mul(
                 topk_video_feats.unsqueeze(2),                      # [M, K, 1, C]
                 video_feats[scatter_m2v].unsqueeze(1),              # [M, 1, P, C]
             ).sum(dim=-1).reshape(M * K, -1)                        # [M * K, P]
-            
+
             # video_feats.view(-1, C).t(),                        # [C, B * P]
-            
+
             ## original neg mask
             intra_video_neg_mask = iou2d < self.neg_iou             # [S, P]
             ## Don't choose lower left as negative sample
@@ -480,8 +483,8 @@ class ContrastiveLoss(nn.Module):
         else:
             loss_intra_video = torch.tensor(0., device=device)
         '''
-         
-        #### Compute whole batch 
+
+        #### Compute whole batch
         if self.intra:
             # === intra video
             shift = 0
@@ -489,7 +492,7 @@ class ContrastiveLoss(nn.Module):
             scatter_e2s = []
             for i, num in enumerate(num_targets):
                 ## only for multi-target samples
-                if num > 1: 
+                if num > 1:
                     pairs = torch.ones(
                         num * K, num * K, device=device).nonzero()      # [num * K * num * K, 2]
                     combinations.append(pairs + shift)
@@ -519,14 +522,14 @@ class ContrastiveLoss(nn.Module):
                 pos_video_feats,                                    # [M * K, C]
                 video_feats.view(-1, C).t(),                        # [C, B * P]
             )                                                       # [M * K, B * P]
-            
+
             ## same mask as inter query (sentence -> proposals)
             intra_video_neg_mask = inter_query_neg_mask.clone().squeeze() # [S, B * P]
-            
+
             loss_intra_video = self.log_cross_entropy(
                 intra_video_pos,                                    # [E]
                 intra_video_all[ref_idx],                           # [E, B * P]
-                intra_video_neg_mask[scatter_e2s],                  # [E, B * P] 
+                intra_video_neg_mask[scatter_e2s],                  # [E, B * P]
                 self.T_v,
             )
 
@@ -665,7 +668,7 @@ class ProbEmbedContrastiveLoss(nn.Module):
             #    topk_video_feats_mean,                                   # [M, K, C]
             #    sents_feats_mean[scatter_m2s].unsqueeze(1)               # [M, 1, C]
             #).sum(dim=-1)                                                # [M, K]
-            
+
             ## Probabilistic embedding approach
             sampled_topk_video_feats = sample_gaussian_tensors(
                                             topk_video_feats_mean,         # [M, K, C]
@@ -684,8 +687,8 @@ class ProbEmbedContrastiveLoss(nn.Module):
             # compute inter_video_pos [M, K]
             sampled_topk_video_feats = sampled_topk_video_feats.repeat(1, 1, self.num_samples, 1) # [M, K, num_samples^2, C]
             sampled_m2s_sents_feats = torch.repeat_interleave(
-                                        sampled_m2s_sents_feats, 
-                                        self.num_samples, 
+                                        sampled_m2s_sents_feats,
+                                        self.num_samples,
                                         dim=-2
                                         ) # [M, K, num_samples^2, C]
             inter_video_pos = torch.mul(
@@ -703,15 +706,15 @@ class ProbEmbedContrastiveLoss(nn.Module):
 
             ## neg
             sampled_topk_video_feats = sample_gaussian_tensors(
-                                            topk_video_feats_mean, 
-                                            topk_video_feats_log_sigma, 
+                                            topk_video_feats_mean,
+                                            topk_video_feats_log_sigma,
                                             self.num_samples
                                         )    # [M, K, num_samples, C]
             sampled_topk_video_feats = F.normalize(sampled_topk_video_feats.contiguous(), dim=-1)
 
             sampled_sents_feats = sample_gaussian_tensors(
-                                            sents_feats_mean, 
-                                            sents_feats_log_sigma, 
+                                            sents_feats_mean,
+                                            sents_feats_log_sigma,
                                             self.num_samples
                                         ) # [S, num_samples, C]
             sampled_sents_feats = F.normalize(sampled_sents_feats.contiguous(), dim=-1)
@@ -720,8 +723,8 @@ class ProbEmbedContrastiveLoss(nn.Module):
             # compute inter_video_neg [M, K, S]
             sampled_topk_video_feats = sampled_topk_video_feats.repeat(1, 1, self.num_samples, 1).unsqueeze(2) # [M, K, 1, num_samples^2, C]
             sampled_sents_feats = torch.repeat_interleave(
-                                        sampled_sents_feats, 
-                                        self.num_samples, 
+                                        sampled_sents_feats,
+                                        self.num_samples,
                                         dim=-2
                                     ) # [S, num_samples^2, C]
             inter_video_all = torch.mul(
@@ -756,15 +759,15 @@ class ProbEmbedContrastiveLoss(nn.Module):
 
             ## Probabilistic embedding approach
             sampled_sents_feats = sample_gaussian_tensors(
-                                        sents_feats_mean, 
-                                        sents_feats_log_sigma, 
+                                        sents_feats_mean,
+                                        sents_feats_log_sigma,
                                         self.num_samples
                                     ) # [S, num_samples, C]
             sampled_sents_feats = F.normalize(sampled_sents_feats.contiguous(), dim=-1)
 
             sampled_video_feats = sample_gaussian_tensors(
-                                        video_feats_mean, 
-                                        video_feats_log_sigma, 
+                                        video_feats_mean,
+                                        video_feats_log_sigma,
                                         self.num_samples
                                     ) # [B, P, num_samples, C]
             sampled_video_feats = F.normalize(sampled_video_feats.contiguous(), dim=-1)
@@ -773,8 +776,8 @@ class ProbEmbedContrastiveLoss(nn.Module):
             sampled_sents_feats = sampled_sents_feats.repeat(1, self.num_samples, 1).unsqueeze(1)  # [S, 1, num_samples^2, C]
             sampled_video_feats = sampled_video_feats.view(B*P, self.num_samples, C)  # [B * P, num_samples, C]
             sampled_video_feats = torch.repeat_interleave(
-                                        sampled_video_feats, 
-                                        self.num_samples, 
+                                        sampled_video_feats,
+                                        self.num_samples,
                                         dim=-2
                                     ) # [B * P, num_samples^2, C]
 
@@ -854,8 +857,8 @@ if __name__ == '__main__':
 
     ## test ScaledIoUFocalLoss
     loss_fn = ScaledIoUFocalLoss(
-                    min_iou=0.5, 
-                    max_iou=1.0, 
+                    min_iou=0.5,
+                    max_iou=1.0,
                     scale=10,
                     alpha=0.25,
                     gamma=2
@@ -877,11 +880,11 @@ if __name__ == '__main__':
     video_feats_mean = torch.randn(B, C, N, N)
     video_feats_log_sigma = torch.randn(B, C, N, N)
     #video_feats_log_sigma = torch.clamp(video_feats_log_sigma, min=-1.15, max=1.15)
-    
+
     sents_feats_mean = torch.randn(S, C)
     sents_feats_log_sigma = torch.randn(S, C)
     #sents_feats_log_sigma = torch.clamp(sents_feats_log_sigma, min=-1.15, max=1.15)
-    
+
 
     loss_fn = ProbEmbedContrastiveLoss()
     (

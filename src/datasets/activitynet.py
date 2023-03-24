@@ -36,6 +36,7 @@ class ActivityNet(CollateBase):
             tgt_moments = []
             num_targets = []
             qids = []
+            assert 'timestamps' in video_data, 'No timestamps found'
             for timestamp, sentence in zip(
                     video_data['timestamps'], video_data['sentences']):
                 timestamp = torch.Tensor(timestamp)
@@ -66,9 +67,10 @@ class ActivityNet(CollateBase):
     # override
     def get_feat(self, anno):
         with h5py.File(self.feat_file, 'r') as f:
-            feat = f[anno['vid']]['c3d_features'][:]
-            feat = F.normalize(torch.from_numpy(feat), dim=1)
-        return feat
+            feats = f[anno['vid']]['c3d_features'][:]
+            feats = torch.from_numpy(feats).float()
+            feats = F.normalize(feats, dim=-1)
+        return feats
 
 
 class ActivityNetTrain(ActivityNet):

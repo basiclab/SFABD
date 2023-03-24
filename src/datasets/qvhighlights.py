@@ -12,16 +12,9 @@ class QVHighlights(CollateBase):
         self,
         ann_file,               # path to annotation file (.json)
         feat_dirs,              # path to feature directories
-        fallback_feat_dir=[
-            './data/QVHighlights/features/clip_features/',
-            './data/QVHighlights/features/slowfast_features/',
-        ],                      # path to fallback feature directory
     ):
         super().__init__(ann_file)
         self.feat_dirs = feat_dirs
-        self.fallback_feat_dir = fallback_feat_dir
-
-        assert len(self.feat_dirs) == len(self.fallback_feat_dir)
 
     def get_feat_dim(self):
         return 2816     # slowfast: 2304 + clip: 512
@@ -30,14 +23,9 @@ class QVHighlights(CollateBase):
     def get_feat(self, anno):
         feats = []
         min_len = 1000000
-        for dir, fallback_dir in zip(self.feat_dirs, self.fallback_feat_dir):
+        for dir in self.feat_dirs:
             path = os.path.join(dir, anno['vid'] + '.npz')
-            if os.path.exists(path):
-                x = np.load(path)['features']
-            else:
-                path = os.path.join(fallback_dir, anno['vid'] + '.npz')
-                assert os.path.exists(path), f"fallback path {path} doest not exist"
-                x = np.load(path)['features']
+            x = np.load(path)['features']
             x = torch.from_numpy(x).float()
             x = F.normalize(x, dim=1)
             feats.append(x)

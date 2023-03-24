@@ -117,47 +117,32 @@ def train_epoch(
 
         video_feats, sents_feats, logits2d, scores2ds, mask2d = model(**batch)
         loss_iou = loss_iou_fn(logits2d, iou2d, mask2d)
-        if config.contrastive_weight != 0:
-            loss_inter_video, loss_inter_query, loss_intra_video = loss_con_fn(
-                video_feats=video_feats,
-                sents_feats=sents_feats,
-                num_sentences=batch['num_sentences'],
-                num_targets=batch['num_targets'],
-                iou2d=iou2d,
-                iou2ds=iou2ds,
-                mask2d=mask2d,
-            )
+        loss_inter_video, loss_inter_query, loss_intra_video = loss_con_fn(
+            video_feats=video_feats,
+            sents_feats=sents_feats,
+            num_sentences=batch['num_sentences'],
+            num_targets=batch['num_targets'],
+            iou2d=iou2d,
+            iou2ds=iou2ds,
+            mask2d=mask2d,
+        )
 
-            if epoch < config.intra_start_epoch:
-                loss_contrastive = torch.sum(torch.stack([
-                    loss_inter_video * config.inter_weight,
-                    loss_inter_query * config.inter_weight,
-                    loss_intra_video * 0,
-                ]))
-            else:
-                loss_contrastive = torch.sum(torch.stack([
-                    loss_inter_video * config.inter_weight,
-                    loss_inter_query * config.inter_weight,
-                    loss_intra_video * config.intra_weight,
-                ]))
-
+        if epoch < config.intra_start_epoch:
+            inter_weight = config.inter_weight
+            intra_weight = 0
         else:
-            loss_inter_video = torch.zeros((), device=device)
-            loss_inter_query = torch.zeros((), device=device)
-            loss_intra_video = torch.zeros((), device=device)
-            loss_contrastive = torch.zeros((), device=device)
+            inter_weight = config.inter_weight
+            intra_weight = config.intra_weight
+        if epoch >= config.contrastive_decay_start:
+            inter_weight = inter_weight * config.contrastive_decay
+            intra_weight = intra_weight * config.contrastive_decay
 
         # total loss summation
-        if epoch < config.contrastive_decay_start:
-            loss = torch.sum(torch.stack([
-                loss_iou * config.iou_weight,
-                loss_contrastive * config.contrastive_weight,
-            ]))
-        else:
-            loss = torch.sum(torch.stack([
-                loss_iou * config.iou_weight,
-                loss_contrastive * config.contrastive_weight_decay,
-            ]))
+        loss = \
+            loss_iou * config.iou_weight + \
+            loss_inter_video * inter_weight + \
+            loss_inter_query * inter_weight + \
+            loss_intra_video * intra_weight
 
         loss.backward()
         if config.grad_clip > 0:
@@ -180,7 +165,6 @@ def train_epoch(
         # save loss to tensorboard
         losses['loss/total'].append(loss.cpu())
         losses['loss/iou'].append(loss_iou.cpu())
-        losses['loss/contrastive'].append(loss_contrastive.cpu())
         losses['loss/inter_video'].append(loss_inter_video.cpu())
         losses['loss/inter_query'].append(loss_inter_query.cpu())
         losses['loss/intra_video'].append(loss_intra_video.cpu())
@@ -236,8 +220,8 @@ def training_loop(config: AttrDict):
         neg_iou=config.neg_iou,
         pos_topk=config.pos_topk,
         margin=config.margin,
-        inter=config.inter,
-        intra=config.intra,
+        inter=config.inter_weight > 0,
+        intra=config.intra_weight > 0,
     )
 
     # model
