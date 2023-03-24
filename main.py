@@ -47,7 +47,7 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--intra_start', default=0)
 @click.option('--contrastive_decay', default=0.01)
 @click.option('--contrastive_decay_start', default=7)
-@click.option('--inter_weight', default=1)
+@click.option('--inter_weight', default=1.0)
 @click.option('--intra_weight', default=0.1)
 # optimizer
 @click.option('--base_lr', default=8e-4)
