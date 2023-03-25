@@ -2,6 +2,7 @@ import importlib
 import json
 import random
 import warnings
+from collections import defaultdict
 from typing import Dict, Union, List
 
 import click
@@ -48,59 +49,116 @@ def construct_class(module, *args, **kwargs):
     return getattr(importlib.import_module(module), class_name)(*args, **kwargs)
 
 
-def print_table(
-    epoch: int = 0,
-    rows: Dict[str, Dict[str, float]] = {},
-    keys: Union[None, List[str]] = None,
+def build_table(cells, row_names, col_names) -> List[str]:
+    col_widths = {
+        col_name: len(col_name)
+        for col_name in col_names
+    }
+    for row_name in row_names:
+        for col_name in col_names:
+            col_widths[col_name] = max(
+                col_widths[col_name],
+                len("%5.2f" % (cells[row_name][col_name] * 100)))
+    col_widths['col'] = max(len(row_name) for row_name in row_names)
+    total_width = sum(col_widths.values()) + 3 * len(col_widths) + 1
+
+    # build table
+    table = ["-" * total_width]
+
+    # header
+    header = ['|', ' ' * col_widths['col'], '|']
+    for col_name in col_names:
+        header.append(col_name.center(col_widths[col_name]))
+        header.append('|')
+    table.append(" ".join(header))
+
+    # separator
+    table.append("-" * total_width)
+
+    # body
+    for row_name in row_names:
+        row = ['|', f"{row_name:<{col_widths['col']}}", '|']
+        for col_name in col_names:
+            mAP_str = f"{cells[row_name][col_name] * 100:5.2f}"
+            row.append(mAP_str.center(col_widths[col_name]))
+            row.append('|')
+        table.append(" ".join(row))
+
+    # footer
+    table.append("-" * total_width)
+    return table
+
+
+def build_mAP(
+    mAPs: Dict[str, float],
+    row_names: List[str] = ['all', 'sh', 'md', 'lg', 'sgl', 'mul'],
 ) -> None:
-    column_names = set()
-    for row in rows.values():
-        if keys:
-            for key in row.keys():
-                if any(key.startswith(k) for k in keys):
-                    column_names.add(key)
-        else:
-            column_names.update(row.keys())
-    column_names = sorted(column_names)
+    col_names = set()
+    cells = defaultdict(dict)
+    for key, value in mAPs.items():
+        row_name, col_name = key.split('/')
+        col_names.add(col_name)
+        cells[row_name][col_name] = value
+        assert row_name in row_names
+    col_names = sorted(list(col_names))
 
-    rows_str = [[f"Epoch {epoch:2d}", *column_names]]
-    rows_width = [len(head) for head in rows_str[0]]
-    for row_name, row in rows.items():
-        row_str = [row_name]
-        for column in column_names:
-            if column in row:
-                row_str.append(f"{row[column] * 100:.3f}")
-            else:
-                row_str.append("Not Found")
-        for i in range(len(row_str)):
-            rows_width[i] = max(rows_width[i], len(row_str[i]))
-        rows_str.append(row_str)
+    return build_table(cells, row_names, col_names)
 
-    sep = '+' + '+'.join('-' * (w) for w in rows_width) + '+'
-    print(sep)
-    for row_str in rows_str:
-        print('|', end='')
-        for width, cell in zip(rows_width, row_str):
-            print(cell.center(width), end='|')
-        print("\n" + sep)
+
+def build_recall(recalls: Dict[str, float]) -> None:
+    row_names = set()
+    col_names = set()
+    cells = defaultdict(dict)
+    for key, value in recalls.items():
+        row_name, col_name = key.split(',')
+        row_names.add(row_name)
+        col_names.add(col_name)
+        cells[row_name][col_name] = value
+    row_names = sorted(list(row_names))
+    col_names = sorted(list(col_names))
+
+    return build_table(cells, row_names, col_names)
+
+
+def print_metrics(mAPs: Dict[str, float], recalls: Dict[str, float]) -> None:
+    table1 = build_mAP(mAPs)
+    table2 = build_recall(recalls)
+    rows = max(len(table1), len(table2))
+
+    while len(table1) < rows:
+        table1.append(' ' * len(table1[0]))
+
+    while len(table2) < rows:
+        table2.append(' ' * len(table2[0]))
+
+    for row1, row2 in zip(table1, table2):
+        print(f"{row1}   {row2}")
 
 
 if __name__ == '__main__':
     import random
-    print_table(
-        epoch=3,
-        rows={
-            "train": {
-                "R@1,IoU=0.5": random.random(),
-                "R@1,IoU=0.7": random.random(),
-                "R@5,IoU=0.5": random.random(),
-                "R@5,IoU=0.7": random.random(),
-            },
-            "test": {
-                "R@1,IoU=0.5": random.random(),
-                "R@1,IoU=0.7": random.random(),
-                "R@5,IoU=0.5": random.random(),
-                "R@5,IoU=0.7": random.random(),
-            },
-        },
-    )
+    print_metrics({
+        "all/mAP@0.50": 0.24011583626270294,
+        "all/mAP@0.75": 0.13699504733085632,
+        "all/mAP@avg": 0.14617718756198883,
+        "sgl/mAP@0.50": 0.30263885855674744,
+        "sgl/mAP@0.75": 0.17896008491516113,
+        "sgl/mAP@avg": 0.19009943306446075,
+        "mul/mAP@0.50": 0.11978838592767715,
+        "mul/mAP@0.75": 0.05623213201761246,
+        "mul/mAP@avg": 0.061647556722164154,
+        "sh/mAP@0.50": 0.113711416721344,
+        "sh/mAP@0.75": 0.061229877173900604,
+        "sh/mAP@avg": 0.06487669795751572,
+        "md/mAP@0.50": 0.23680077493190765,
+        "md/mAP@0.75": 0.11836647987365723,
+        "md/mAP@avg": 0.1287669688463211,
+        "lg/mAP@0.50": 0.9484522938728333,
+        "lg/mAP@0.75": 0.6347619295120239,
+        "lg/mAP@avg": 0.6652143001556396
+    }, {
+        "R@1,IoU=0.5": 0.06974927751308287,
+        "R@1,IoU=0.7": 0.045926735921268454,
+        "R@5,IoU=0.5": 0.15980629539951574,
+        "R@5,IoU=0.7": 0.10317894243536671
+    })

@@ -225,3 +225,14 @@ class BboxRegression(nn.Module):
         offset = self.offset_predictor(concated_feats)                  # [S, 2, N, N],  delta_s and delta_e
 
         return offset
+
+
+if __name__ == '__main__':
+    m = ProposalConv(512, 512, 256, 9, 4)
+    size = sum(p.numel() for p in m.parameters() if p.requires_grad)
+    print(size)
+
+    from src.models.masked_resnet import MaskedResNet18
+    m = MaskedResNet18(512, 512, 256)
+    size = sum(p.numel() for p in m.parameters() if p.requires_grad)
+    print(size)

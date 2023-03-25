@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 import src.dist as dist
 from src.evaluation import calculate_recall, calculate_mAPs, recall_name
-from src.misc import print_table, construct_class
+from src.misc import print_metrics, construct_class
 from src.models.model import MMN
 from src.utils import nms, scores2ds_to_moments
 
@@ -118,8 +118,7 @@ def testing_loop(config):
         pred_moments, true_moments, config.recall_Ns, config.recall_IoUs)
     mAPs = calculate_mAPs(pred_moments, true_moments)
 
-    print_table(epoch=0, rows={'val': recall})
-    print_table(epoch=0, rows={'val': mAPs})
+    print_metrics(mAPs, recall)
 
     # test
     pred_submission = []

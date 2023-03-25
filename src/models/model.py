@@ -8,6 +8,7 @@ from src.models.modules import (
     AggregateVideo, Conv1dPool, SparseMaxPool,
     ProposalConv, LanguageModel, BboxRegression
 )
+from src.models.masked_resnet import ProposalResNet18
 
 
 # cos sim between 2D proposal map and query
@@ -107,14 +108,19 @@ class MMN(nn.Module):
                 feat1d_pool_stride_size,
             ),                                              # [B, C, N]
             SparseMaxPool(feat2d_pool_counts),              # [B, C, N, N]
-            ProposalConv(
+            # ProposalConv(
+            #     feat1d_out_channel,
+            #     conv2d_hidden_channel,
+            #     joint_space_size,
+            #     conv2d_kernel_size,
+            #     conv2d_num_layers,
+            #     dual_space,
+            # )                                               # [B, C, N, N]
+            ProposalResNet18(
                 feat1d_out_channel,
                 conv2d_hidden_channel,
                 joint_space_size,
-                conv2d_kernel_size,
-                conv2d_num_layers,
-                dual_space,
-            )                                               # [B, C, N, N]
+            ),
         )
 
         self.sents_model = LanguageModel(joint_space_size, dual_space)                   # [S, C]

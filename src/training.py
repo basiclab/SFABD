@@ -16,7 +16,7 @@ from src.evaluation import calculate_recall, calculate_mAPs
 from src.losses.main import (
     ScaledIoULoss, ContrastiveLoss
 )
-from src.misc import AttrDict, set_seed, print_table, construct_class
+from src.misc import AttrDict, set_seed, construct_class, print_metrics
 from src.models.model import MMN
 from src.utils import (
     nms, scores2ds_to_moments, moments_to_iou2ds, moments_to_rescaled_iou2ds,
@@ -284,9 +284,8 @@ def training_loop(config: AttrDict):
             test_writer.add_scalar(f'mAP/{name}', value, 0)
 
         # print to terminal
-        print_table(epoch=0, rows={'test': test_recall})
-        print_table(epoch=0, rows={"test": test_mAPs}, keys=metric_keys_1)
-        print_table(epoch=0, rows={"test": test_mAPs}, keys=metric_keys_2)
+        print("Epoch 0")
+        print_metrics(test_mAPs, test_recall)
         best_recall = test_recall
         best_mAPs = test_mAPs
     dist.barrier()
@@ -338,9 +337,8 @@ def training_loop(config: AttrDict):
                 test_writer.add_scalar(f'mAP/{name}', value, epoch)
 
             # show recall and mAPs in terminal
-            print_table(epoch, {"train": train_recall, "test": test_recall})
-            print_table(epoch, {"train": train_mAPs, "test": test_mAPs}, keys=metric_keys_1)
-            print_table(epoch, {"train": train_mAPs, "test": test_mAPs}, keys=metric_keys_2)
+            print(f"Epoch {epoch}")
+            print_metrics(test_mAPs, test_recall)
 
             # save last checkpoint
             state = {
@@ -375,7 +373,7 @@ def training_loop(config: AttrDict):
 
             # save evaluation results to file
             append_to_json_file(
-                os.path.join(config.logdir, "recall.json"),
+                os.path.join(config.logdir, "metrics.json"),
                 {
                     'epoch': epoch,
                     'train': {
