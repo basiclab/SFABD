@@ -24,9 +24,9 @@
     "pos_topk": 1,
     "margin": 0.3,
     "intra_start": 0,
-    "contrastive_decay": 0.01,
-    "contrastive_decay_start": 999,
-    "inter_weight": 1,
+    "contrastive_decay": 0.1,
+    "contrastive_decay_start": 5,
+    "inter_weight": 10,
     "intra_weight": 0,
 
     "epochs": 10,
