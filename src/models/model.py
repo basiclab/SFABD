@@ -120,6 +120,7 @@ class MMN(nn.Module):
                 feat1d_out_channel,
                 conv2d_hidden_channel,
                 joint_space_size,
+                dual_space,
             ),
         )
 

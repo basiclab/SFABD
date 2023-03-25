@@ -27,7 +27,7 @@
     "contrastive_decay": 0.01,
     "contrastive_decay_start": 7,
     "inter_weight": 1,
-    "intra_weight": 0.1,
+    "intra_weight": 0.01,
 
     "epochs": 10,
     "batch_size": 24,
