@@ -35,7 +35,7 @@
     "bert_lr": 8e-5,
     "milestones": [7, 15],
     "step_gamma": 0.1,
-    "bert_freeze_epoch": 4,
+    "bert_fire_start": 5,
     "grad_clip": 5.0,
 
     "test_batch_size": 48,

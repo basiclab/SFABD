@@ -294,7 +294,7 @@ def training_loop(config: AttrDict):
         train_sampler.set_epoch(epoch)
 
         # freeze BERT parameters for the first few epochs
-        if epoch == config.bert_freeze_epoch + 1:
+        if epoch == config.bert_fire_start:
             for param in bert_params:
                 param.requires_grad_(True)
             model = SyncBatchNorm.convert_sync_batchnorm(model_local)

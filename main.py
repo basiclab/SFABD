@@ -55,7 +55,7 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--milestones', default=[8], multiple=True)
 @click.option('--batch_size', default=24)
 @click.option('--epochs', default=18)
-@click.option('--bert_freeze_epoch', default=4)
+@click.option('--bert_fire_start', default=4)
 @click.option('--grad_clip', default=5.0)
 @click.option('--step_gamma', default=0.1)
 # testing options

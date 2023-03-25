@@ -24,10 +24,10 @@
     "pos_topk": 1,
     "margin": 0.3,
     "intra_start": 0,
-    "contrastive_decay": 0.01,
-    "contrastive_decay_start": 999,
-    "inter_weight": 1,
-    "intra_weight": 0.1,
+    "contrastive_decay": 0.1,
+    "contrastive_decay_start": 5,
+    "inter_weight": 10,
+    "intra_weight": 0,
 
     "epochs": 10,
     "batch_size": 24,
@@ -35,7 +35,7 @@
     "bert_lr": 1e-5,
     "milestones": [10],
     "step_gamma": 0.1,
-    "bert_freeze_epoch": 5,
+    "bert_fire_start": 6,
     "grad_clip": 5.0,
 
     "test_batch_size": 48,
