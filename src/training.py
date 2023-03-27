@@ -13,15 +13,11 @@ from tqdm import tqdm
 
 import src.dist as dist
 from src.evaluation import calculate_recall, calculate_mAPs
-from src.losses.main import (
-    ScaledIoULoss, ContrastiveLoss
-)
 from src.misc import AttrDict, set_seed, construct_class, print_metrics
-from src.models.model import MMN
+from src.models.main import MMN
 from src.utils import (
-    nms, scores2ds_to_moments, moments_to_iou2ds, moments_to_rescaled_iou2ds,
-    iou2ds_to_iou2d, plot_moments_on_iou2d
-)
+    nms, scores2ds_to_moments, moments_to_iou2ds, iou2ds_to_iou2d,
+    plot_moments_on_iou2d)
 
 
 def append_to_json_file(path, data):
@@ -94,7 +90,8 @@ def train_epoch(
     loader: torch.utils.data.DataLoader,
     optimizer: torch.optim.Optimizer,
     loss_iou_fn: torch.nn.Module,
-    loss_con_fn: torch.nn.Module,
+    loss_inter_fn: torch.nn.Module,
+    loss_intra_fn: torch.nn.Module,
     epoch: int,
     config: AttrDict,
 ):
@@ -116,8 +113,20 @@ def train_epoch(
         iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])
 
         video_feats, sents_feats, logits2d, scores2ds, mask2d = model(**batch)
-        loss_iou = loss_iou_fn(logits2d, iou2d, mask2d)
-        loss_inter_video, loss_inter_query, loss_intra_video = loss_con_fn(
+        loss_iou, loss_iou_metrics = loss_iou_fn(
+            logits2d=logits2d,
+            iou2d=iou2d,
+            mask2d=mask2d)
+        loss_inter, loss_inter_metrics = loss_inter_fn(
+            video_feats=video_feats,
+            sents_feats=sents_feats,
+            num_sentences=batch['num_sentences'],
+            num_targets=batch['num_targets'],
+            iou2d=iou2d,
+            iou2ds=iou2ds,
+            mask2d=mask2d,
+        )
+        loss_intra, loss_intra_metrics = loss_intra_fn(
             video_feats=video_feats,
             sents_feats=sents_feats,
             num_sentences=batch['num_sentences'],
@@ -127,22 +136,12 @@ def train_epoch(
             mask2d=mask2d,
         )
 
-        if epoch < config.intra_start:
-            inter_weight = config.inter_weight
-            intra_weight = 0
+        if epoch < config.contrastive_decay_start:
+            loss = \
+                loss_iou + loss_inter + loss_intra
         else:
-            inter_weight = config.inter_weight
-            intra_weight = config.intra_weight
-        if epoch >= config.contrastive_decay_start:
-            inter_weight = inter_weight * config.contrastive_decay
-            intra_weight = intra_weight * config.contrastive_decay
-
-        # total loss summation
-        loss = \
-            loss_iou * config.iou_weight + \
-            loss_inter_video * inter_weight + \
-            loss_inter_query * inter_weight + \
-            loss_intra_video * intra_weight
+            loss = \
+                loss_iou + (loss_inter + loss_intra) * config.contrastive_decay
 
         loss.backward()
         if config.grad_clip > 0:
@@ -163,22 +162,17 @@ def train_epoch(
         true_moments.append(true_moments_batch)
 
         # save loss to tensorboard
-        losses['loss/total'].append(loss.cpu())
-        losses['loss/iou'].append(loss_iou.cpu())
-        losses['loss/inter_video'].append(loss_inter_video.cpu())
-        losses['loss/inter_query'].append(loss_inter_query.cpu())
-        losses['loss/intra_video'].append(loss_intra_video.cpu())
+        metrics = {
+            'loss/total': loss,
+            **loss_iou_metrics,
+            **loss_inter_metrics,
+            **loss_intra_metrics,
+        }
+        for key, value in metrics.items():
+            losses[key].append(value.cpu())
 
         # update progress bar
-        pbar.set_postfix_str(", ".join([
-            f"loss: {loss.item():.2f}",
-            f"iou: {loss_iou.item():.2f}",
-            "[inter]",
-            f"video: {loss_inter_video.item():.2f}",
-            f"query: {loss_inter_query.item():.2f}",
-            "[intra]",
-            f"video: {loss_intra_video.item():.2f}",
-        ]))
+        pbar.set_postfix_str(f"loss: {loss.item():.2f}")
     pbar.close()
 
     losses = {key: torch.stack(value).mean() for key, value in losses.items()}
@@ -213,19 +207,34 @@ def training_loop(config: AttrDict):
     )
 
     # loss functions
-    loss_iou_fn = ScaledIoULoss(config.min_iou, config.max_iou)
-    loss_con_fn = ContrastiveLoss(
-        T_v=config.tau_video,
-        T_q=config.tau_query,
+    loss_iou_fn = construct_class(
+        config.IoULoss,
+        min_iou=config.min_iou,
+        max_iou=config.max_iou,
+        alpha=config.alpha,
+        gamma=config.gamma,
+        weight=config.iou_weight,
+    )
+    loss_inter_fn = construct_class(
+        config.InterContrastiveLoss,
+        t=config.inter_t,
+        m=config.inter_m,
         neg_iou=config.neg_iou,
         pos_topk=config.pos_topk,
-        margin=config.margin,
-        inter=config.inter_weight > 0,
-        intra=config.intra_weight > 0,
+        weight=config.inter_weight,
+    )
+    loss_intra_fn = construct_class(
+        config.IntraContrastiveLoss,
+        t=config.intra_t,
+        m=config.intra_m,
+        neg_iou=config.neg_iou,
+        pos_topk=config.pos_topk,
+        weight=config.intra_weight,
     )
 
     # model
     model_local = MMN(
+        backbone=config.backbone,
         num_init_clips=config.num_init_clips,
         feat1d_in_channel=train_dataset.get_feat_dim(),
         feat1d_out_channel=config.feat1d_out_channel,
@@ -258,10 +267,6 @@ def training_loop(config: AttrDict):
     ], betas=(0.9, 0.99), weight_decay=1e-5)
     # scheduler
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, config.milestones, config.step_gamma)
-
-    # mAP metric groups
-    metric_keys_1 = ["all/mAP", "sgl/mAP", "mul/mAP"]
-    metric_keys_2 = ["sh/mAP", "md/mAP", "lg/mAP"]
 
     # evaluate test set before the start of training
     test_pred_moments, test_true_moments = test_epoch(model, test_loader, 0, config)
@@ -301,8 +306,8 @@ def training_loop(config: AttrDict):
             model = DistributedDataParallel(model, device_ids=[device])
 
         train_pred_moments, train_true_moments, train_losses = train_epoch(
-            model, train_loader, optimizer, loss_iou_fn, loss_con_fn, epoch,
-            config)
+            model, train_loader, optimizer,
+            loss_iou_fn, loss_inter_fn, loss_intra_fn, epoch, config)
         test_pred_moments, test_true_moments = test_epoch(
             model, test_loader, epoch, config)
         scheduler.step()

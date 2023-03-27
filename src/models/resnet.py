@@ -182,13 +182,15 @@ class MaskedResNet(nn.Module):
         return x, mask
 
 
-class ProposalResNet18(MaskedResNet):
+class ProposalConv(MaskedResNet):
     def __init__(
         self,
         in_channel: int,            # input feature size (512)
         hidden_channel: int,        # hidden feature size (512)
         out_channel: int,           # output feature size (256)
-        dual_space: bool = False    # whether to use dual feature scpace
+        dual_space: bool = False,   # whether to use dual feature scpace
+        *args,
+        **kwargs,
     ):
         super().__init__(
             in_channel,
@@ -228,9 +230,9 @@ class ProposalResNet18(MaskedResNet):
 
 
 if __name__ == '__main__':
-    m = ProposalResNet18(512, 512, 256)
+    m = ProposalConv(in_channel=512, hidden_channel=512, out_channel=256)
     x = torch.randn(4, 512, 64, 64)
-    mask = torch.rand(1, 1, 64, 64) > 0.5
+    mask = torch.rand(64, 64) > 0.5
     x1, x2, mask = m((x, mask))
     print(x1.shape, x2.shape, mask.shape)
 

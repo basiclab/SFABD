@@ -13,7 +13,7 @@ from tqdm import tqdm
 import src.dist as dist
 from src.evaluation import calculate_recall, calculate_mAPs, recall_name
 from src.misc import print_metrics, construct_class
-from src.models.model import MMN
+from src.models.main import MMN
 from src.utils import nms, scores2ds_to_moments
 
 

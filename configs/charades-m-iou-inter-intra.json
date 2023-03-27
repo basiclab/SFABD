@@ -16,7 +16,6 @@
     "tau_video": 0.1,
     "tau_query": 0.1,
     "neg_iou": 0.5,
-    "pos_iou": 0.9,
     "margin": 0.4,
     "inter": true,
     "intra": true,

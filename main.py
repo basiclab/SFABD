@@ -13,51 +13,56 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--config', default=None, type=str)
 @click.option('--seed', default=25285)
 @click.option('--test_only/--no-test_only', default=False)
-# train dataset
-@click.option('--TrainDataset', "TrainDataset", default='src.datasets.charades.Charades')
-# test dataset
-@click.option('--TestDataset', "TestDataset", default='src.datasets.charades.Charades')
-# dataset share
+# dataset common settings
 @click.option('--num_init_clips', default=32)
 @click.option('--num_clips', default=16)
+# datasets
+@click.option('--TrainDataset', "TrainDataset", default='src.datasets.charades.Charades')
+@click.option('--TestDataset', "TestDataset", default='src.datasets.charades.Charades')
 # model
+@click.option('--backbone', default="src.models.resnet.ProposalConv")
 @click.option('--feat1d_out_channel', default=512)
 @click.option('--feat1d_pool_kernel_size', default=2)
 @click.option('--feat2d_pool_counts', default=[16], multiple=True)
 @click.option('--conv2d_hidden_channel', default=512)
 @click.option('--conv2d_kernel_size', default=5)
 @click.option('--conv2d_num_layers', default=8)
-@click.option('--dual_space/--no-dual_space', default=False)
-# joint model
 @click.option('--joint_space_size', default=256)
+@click.option('--dual_space/--no-dual_space', default=False)
 # confidence loss
+@click.option('--IoULoss', 'IoULoss', default="src.losses.iou.ScaledIoULoss")
 @click.option('--min_iou', default=0.5)
 @click.option('--max_iou', default=1.0)
+@click.option('--alpha', default=0.25)
+@click.option('--gamma', default=2.0)
 @click.option('--iou_weight', default=1.0)
 # bbox regression loss
 @click.option('--iou_threshold', default=0.75)
 @click.option('--bbox_reg_weight', default=1.0)
-# contrastive loss
-@click.option('--tau_video', default=0.1)
-@click.option('--tau_query', default=0.1)
+# contrastive loss common settings
 @click.option('--neg_iou', default=0.5)
-@click.option('--pos_iou', default=0.9)
 @click.option('--pos_topk', default=1)
-@click.option('--margin', default=0.3)
-@click.option('--intra_start', default=0)
-@click.option('--contrastive_decay', default=0.01)
-@click.option('--contrastive_decay_start', default=7)
+@click.option('--contrastive_decay', default=0.1)
+@click.option('--contrastive_decay_start', default=6)
+# inter contrastive loss
+@click.option('--InterContrastiveLoss', 'InterContrastiveLoss', default="src.losses.contrastive.InterContrastiveLoss")
+@click.option('--inter_t', default=0.1, help='temperature for inter contrastive loss')
+@click.option('--inter_m', default=0.3, help='margin for inter contrastive loss')
 @click.option('--inter_weight', default=1.0)
+# intra contrastive loss
+@click.option('--IntraContrastiveLoss', 'IntraContrastiveLoss', default="src.losses.contrastive.IntraContrastiveLoss")
+@click.option('--intra_t', default=0.1, help='temperature for intra contrastive loss')
+@click.option('--intra_m', default=0.0, help='margin for inter contrastive loss')
 @click.option('--intra_weight', default=0.1)
 # optimizer
-@click.option('--base_lr', default=8e-4)
-@click.option('--bert_lr', default=8e-5)
-@click.option('--milestones', default=[8], multiple=True)
+@click.option('--epochs', default=10)
 @click.option('--batch_size', default=24)
-@click.option('--epochs', default=18)
-@click.option('--bert_fire_start', default=4)
-@click.option('--grad_clip', default=5.0)
+@click.option('--base_lr', default=1e-3)
+@click.option('--bert_lr', default=1e-5)
+@click.option('--milestones', default=[7], multiple=True)
 @click.option('--step_gamma', default=0.1)
+@click.option('--bert_fire_start', default=1)
+@click.option('--grad_clip', default=5.0)
 # testing options
 @click.option('--test_batch_size', default=48)
 @click.option('--nms_threshold', default=0.5)
