@@ -37,16 +37,17 @@
     "IntraContrastiveLoss": "src.losses.contrastive.IntraContrastiveLoss",
     "intra_t": 0.1,
     "intra_m": 0.0,
-    "intra_weight": 0.1,
+    "intra_weight": 0.0,
 
-    "epochs": 10,
+    "epochs": 15,
     "batch_size": 48,
-    "base_lr": 1e-4,
+    "base_lr": 1e-3,
     "bert_lr": 1e-5,
     "milestones": [999],
     "step_gamma": 0.1,
-    "bert_fire_start": 5,
+    "bert_fire_start": 1,
     "grad_clip": 5.0,
 
+    "best_metric": "R@1,IoU=0.7",
     "logdir": "./logs/charades-resnet-iou-inter-intra-focal"
 }

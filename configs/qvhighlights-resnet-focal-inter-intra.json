@@ -48,5 +48,6 @@
     "bert_fire_start": 1,
     "grad_clip": 5.0,
 
+    "best_metric": "all/mAP@avg",
     "logdir": "./logs/qvhighlights-resnet-focal-inter-intra"
 }

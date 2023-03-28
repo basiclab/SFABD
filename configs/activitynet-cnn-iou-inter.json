@@ -47,5 +47,6 @@
     "bert_fire_start": 5,
     "grad_clip": 5.0,
 
+    "best_metric": "R@1,IoU=0.7",
     "logdir": "./logs/activitynet-cnn-iou-inter"
 }
