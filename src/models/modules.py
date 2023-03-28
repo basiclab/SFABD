@@ -313,12 +313,27 @@ class BboxRegression(nn.Module):
         in_channel: int,        # dim of embedding space
     ):
         super().__init__()
-        self.bbox_predictor = nn.Sequential(
-                                    nn.Conv2d(in_channel*2, in_channel, 1),
+        # self.bbox_predictor = nn.Sequential(
+        #                             nn.Conv2d(in_channel*2, in_channel, 1),
+        #                             nn.ReLU(),
+        #                             #nn.Dropout(0.5),
+        #                             nn.Conv2d(in_channel, 2, 1),
+        #                         )
+
+        self.start_offset_head = nn.Sequential(
+                                    nn.Conv2d(in_channel*3, in_channel, 1),
                                     nn.ReLU(),
-                                    nn.Dropout(0.5),
-                                    nn.Conv2d(in_channel, 2, 1),
+                                    #nn.Dropout(0.5),
+                                    nn.Conv2d(in_channel, 1, 1),
                                 )
+
+        self.end_offset_head = nn.Sequential(
+                                    nn.Conv2d(in_channel*3, in_channel, 1),
+                                    nn.ReLU(),
+                                    #nn.Dropout(0.5),
+                                    nn.Conv2d(in_channel, 1, 1),
+                                )
+
 
     def forward(
         self, 
@@ -329,123 +344,29 @@ class BboxRegression(nn.Module):
         S, C = sent_feats.shape
         sent_feats = sent_feats.view(S, C, 1, 1)        ## [S, C, 1, 1]
         sent_feats = sent_feats.expand(-1, -1, N, N)    ## [S, C, N, N]
-        ## channel-wise concat
-        concated_feats = torch.cat([video_feats, sent_feats], dim=1)  ## [S, C+C, N, N] 
-        bbox_center_width = self.bbox_predictor(concated_feats)     ## [S, 2, N, N],  center and width
         
-        return bbox_center_width
-
-     
-class ProposalConv_PE(nn.Module):
-    def __init__(
-        self,
-        in_channel: int,            # input feature size
-        hidden_channel: int,        # hidden feature size
-        out_channel: int,           # output feature size
-        kernel_size: int,           # kernel size
-        num_layers: int,            # number of CNN layers (exclude the projection layers)
-    ):
-        super(ProposalConv_PE, self).__init__()
-        self.kernel_size = kernel_size
-
-        self.blocks = nn.ModuleList()
-        self.paddings = []
-        for idx in range(num_layers):
-            if idx == 0:
-                padding = (kernel_size - 1) * num_layers // 2
-                channel = in_channel
-            else:
-                padding = 0
-                channel = hidden_channel
-            self.blocks.append(nn.Sequential(
-                nn.Conv2d(
-                    channel, hidden_channel, kernel_size, padding=padding),
-                nn.BatchNorm2d(hidden_channel),
-                nn.ReLU(inplace=True),
-            ))
-            self.paddings.append(padding)
-
-            self.mean_proj = nn.Conv2d(hidden_channel, out_channel, 1)
-            self.log_sigma_proj = nn.Conv2d(hidden_channel, out_channel, 1) 
+        ## TODO: Also consider surrounding clips?
+        # index the diagonal proposal features (len=1)
+        unit_clips = torch.diagonal(video_feats, offset=0, dim1=-2, dim2=-1)    ## [S, C, N]
+        # prepare start extra clips for start offset head
+        start_clips = unit_clips.unsqueeze(-1).expand(-1, -1, -1, N)            ## [S, C, N, N]
+        zero_pad = torch.zeros([S, C, 1, N], device=video_feats.device)
+        start_clips = torch.cat((zero_pad, start_clips), dim=-2)                ## [S, C, 1 + N, N]
+        start_clips = start_clips[:, :, :N, :]                                  ## [S, C, N, N]
+        
+        # prepare end extra clips for start offset head
+        end_clips = unit_clips.unsqueeze(-2).expand(-1, -1, N, -1)              ## [S, C, N, N]
+        zero_pad = torch.zeros([S, C, N, 1], device=video_feats.device)         
+        end_clips = torch.cat((end_clips, zero_pad), dim=-1)                    ## [S, C, N, N + 1]
+        end_clips = end_clips[:, :, :, 1:]                                      ## [S, C, N, N]
+        
+        ## start
+        start_concated = torch.cat([video_feats, start_clips, sent_feats], dim=1)
+        start_offset = self.start_offset_head(start_concated)                   ## [S, 1, N, N]
+        
+        ## end 
+        end_concated = torch.cat([video_feats, end_clips, sent_feats], dim=1)
+        end_offset = self.end_offset_head(end_concated)                         ## [S, 1, N, N]
             
-            ## init log_sigma_proj to have small weight
-            #self.init_uncertainty_module_weight()
+        return start_offset, end_offset
 
-    def init_uncertainty_module_weight(self):
-        nn.init.xavier_uniform_(self.log_sigma_proj.weight)
-        # scale down to prevent too large log_sigma
-        self.log_sigma_proj.weight = self.log_sigma_proj.weight * 0.1 
-        nn.init.constant_(self.log_sigma_proj.bias, 0)
-
-
-    def get_masked_weight(self, mask, padding):
-        masked_weight = torch.round(F.conv2d(
-            mask.float(),
-            mask.new_ones(1, 1, self.kernel_size, self.kernel_size).float(),
-            padding=padding))
-        masked_weight[masked_weight > 0] = 1 / masked_weight[masked_weight > 0]
-        mask = masked_weight > 0
-        return mask, masked_weight
-
-    def forward(self, input):
-        x, mask2d = input
-        mask = mask2d.detach().clone().unsqueeze(0).unsqueeze(0)
-        for padding, block in zip(self.paddings, self.blocks):
-            mask, masked_weight = self.get_masked_weight(mask, padding)
-            x = block(x) * masked_weight
-
-            x_mean = self.mean_proj(x)
-            x_log_sigma = self.log_sigma_proj(x)
-
-            # clamp log_sigma
-            ## log_sigma = 1.15 -> log_variance = 2.3 -> variance = 10
-            ## log_sigma = -1.15 -> log_variance = -2.3 -> variance = 0.1
-            x_log_sigma = torch.clamp(x_log_sigma, min=-1.15, max=1.15) 
-
-        return x_mean, x_log_sigma, mask2d
-
-class LanguageModel_PE(nn.Module):
-    def __init__(self, joint_space_size):
-        super().__init__()
-
-        logging.set_verbosity_error()
-        self.bert = DistilBertModel.from_pretrained('distilbert-base-uncased')
-        logging.set_verbosity_warning()
-
-        self.mean_proj = nn.Sequential(
-                nn.LayerNorm(768),
-                nn.Linear(768, joint_space_size),
-        )
-
-        self.log_sigma_proj = nn.Sequential(
-                nn.LayerNorm(768),
-                nn.Linear(768, joint_space_size),
-        )
-
-        ## init log_sigma_proj to have small weight
-        #self.init_uncertainty_module_weight()
-
-    def init_uncertainty_module_weight(self):
-        nn.init.xavier_uniform_(self.log_sigma_proj[1].weight)
-        # scale down to prevent too large log_sigma
-        self.log_sigma_proj.weight = self.log_sigma_proj[1].weight * 0.1 
-        nn.init.constant_(self.log_sigma_proj[1].bias, 0)
-
-    def forward(
-        self,
-        sents_tokens: torch.Tensor,                                         # [S, L]
-        sents_masks: torch.Tensor,                                          # [S, L]
-    ):
-        feats = self.bert(sents_tokens, attention_mask=sents_masks)[0]      # [S, L, C]
-        feats = (feats * sents_masks.unsqueeze(-1)).sum(dim=1)              # [S, C]
-        feats = feats / sents_masks.sum(dim=1, keepdim=True)                # [S, C]
-
-        mean_feats = self.mean_proj(feats)                                  # [S, C]
-        log_sigma_feats = self.log_sigma_proj(feats)                        # [S, C]
-
-        # clamp log_sigma
-        ## log_sigma = 1.15 -> log_variance = 2.3 -> variance = 10
-        ## log_sigma = -1.15 -> log_variance = -2.3 -> variance = 0.1
-        log_sigma_feats = torch.clamp(log_sigma_feats, min=-1.15, max=1.15)
-        
-        return mean_feats, log_sigma_feats

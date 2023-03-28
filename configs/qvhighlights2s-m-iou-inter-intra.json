@@ -36,8 +36,6 @@
     "milestones": [8],
     "bert_freeze_epoch": 4,
     "only_iou_epoch": 6,
-    "num_samples": 7,
-    "kl": true,
     "grad_clip": 5.0,
     "step_gamma": 0.1,
     "test_batch_size": 48,

@@ -4,7 +4,7 @@ import tempfile
 import click
 import torch.multiprocessing
 
-from src.training import training_loop, training_loop_bbox_reg, training_loop_PE
+from src.training import training_loop, training_loop_bbox_reg
 from src.testing import testing_loop, testing_loop_bbox_reg
 from src.misc import AttrDict, CommandAwareConfig
 
@@ -30,10 +30,6 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--dual_space/--no-dual_space', default=False)
 # joint model
 @click.option('--joint_space_size', default=256)
-
-# Probabilistic Embedding
-@click.option('--num_samples', default=7)
-@click.option('--kl/--no-kl', default=True) ## kl constraint
 
 # confidence loss (Focal or BCE loss)
 @click.option('--min_iou', default=0.5)
@@ -115,13 +111,12 @@ def subprocess(rank, world_size, temp_dir, config):
 
     if config.test_only:
         # testing
-        testing_loop(config)
-        #testing_loop_bbox_reg(config)        
+        #testing_loop(config)
+        testing_loop_bbox_reg(config)        
     else:
         # training
         #training_loop(config)
         training_loop_bbox_reg(config)
-        #training_loop_PE(config)
 
 
 if __name__ == "__main__":
