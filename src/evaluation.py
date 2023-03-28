@@ -228,10 +228,15 @@ def calculate_mAPs(
 
     mAPs_dict = {}
     for name, APs in APs_dict.items():
-        mAPs = APs.mean(dim=0)
-        for mAP, iou_threshold in zip(mAPs, mAP_ious):
-            mAPs_dict[f"{name}/{mAP_name(iou_threshold)}"] = mAP.item()
-        mAPs_dict[f"{name}/mAP@avg"] = APs.mean().item()
+        if len(APs) != 0:
+            mAPs = APs.mean(dim=0)
+            for mAP, iou_threshold in zip(mAPs, mAP_ious):
+                mAPs_dict[f"{name}/{mAP_name(iou_threshold)}"] = mAP.item()
+            mAPs_dict[f"{name}/mAP@avg"] = APs.mean().item()
+        else:
+            for iou_threshold in mAP_ious:
+                mAPs_dict[f"{name}/{mAP_name(iou_threshold)}"] = 0.0
+            mAPs_dict[f"{name}/mAP@avg"] = 0.0
 
     results = {}
     for name in APs_dict.keys():
