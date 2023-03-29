@@ -4,8 +4,13 @@ import tempfile
 import click
 import torch.multiprocessing
 
+<<<<<<< HEAD
 from src.training import training_loop, training_loop_bbox_reg
 from src.testing import testing_loop, testing_loop_bbox_reg
+=======
+from src.training import training_loop
+from src.testing import testing_loop
+>>>>>>> dev
 from src.misc import AttrDict, CommandAwareConfig
 
 
@@ -13,71 +18,70 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--config', default=None, type=str)
 @click.option('--seed', default=25285)
 @click.option('--test_only/--no-test_only', default=False)
-# train dataset
-@click.option('--TrainDataset', "TrainDataset", default='src.datasets.charades.Charades')
-# test dataset
-@click.option('--TestDataset', "TestDataset", default='src.datasets.charades.Charades')
-# dataset share
+# dataset common settings
 @click.option('--num_init_clips', default=32)
 @click.option('--num_clips', default=16)
+# datasets
+@click.option('--TrainDataset', "TrainDataset", default='src.datasets.charades.Charades')
+@click.option('--TestDataset', "TestDataset", default='src.datasets.charades.Charades')
 # model
+@click.option('--backbone', default="src.models.resnet.ProposalConv")
 @click.option('--feat1d_out_channel', default=512)
 @click.option('--feat1d_pool_kernel_size', default=2)
 @click.option('--feat2d_pool_counts', default=[16], multiple=True)
 @click.option('--conv2d_hidden_channel', default=512)
 @click.option('--conv2d_kernel_size', default=5)
 @click.option('--conv2d_num_layers', default=8)
-@click.option('--dual_space/--no-dual_space', default=False)
-# joint model
 @click.option('--joint_space_size', default=256)
+<<<<<<< HEAD
 
 # confidence loss (Focal or BCE loss)
+=======
+@click.option('--dual_space/--no-dual_space', default=False)
+# confidence loss
+@click.option('--IoULoss', 'IoULoss', default="src.losses.iou.ScaledIoULoss")
+>>>>>>> dev
 @click.option('--min_iou', default=0.5)
 @click.option('--max_iou', default=1.0)
 @click.option('--alpha', default=0.25)
 @click.option('--gamma', default=2.0)
 @click.option('--iou_weight', default=1.0)
-@click.option('--iou_threshold', default=0.75)
-
 # bbox regression loss
+@click.option('--iou_threshold', default=0.75)
 @click.option('--bbox_reg_weight', default=1.0)
-
-# contrastive loss
-@click.option('--tau_video', default=0.1)
-@click.option('--tau_query', default=0.1)
+# contrastive loss common settings
 @click.option('--neg_iou', default=0.5)
-@click.option('--pos_iou', default=0.9)
 @click.option('--pos_topk', default=1)
-@click.option('--margin', default=0.4)
-@click.option('--inter/--no-inter', default=True)
-@click.option('--intra/--no-intra', default=False)
-@click.option('--intra_start_epoch', default=6)
-@click.option('--contrastive_weight', default=0.05)
-@click.option('--cont_weight_step', default=0.01)
-@click.option('--inter_weight', default=0.1)
+@click.option('--contrastive_decay', default=0.1)
+@click.option('--contrastive_decay_start', default=6)
+# inter contrastive loss
+@click.option('--InterContrastiveLoss', 'InterContrastiveLoss', default="src.losses.contrastive.InterContrastiveLoss")
+@click.option('--inter_t', default=0.1, help='temperature for inter contrastive loss')
+@click.option('--inter_m', default=0.3, help='margin for inter contrastive loss')
+@click.option('--inter_weight', default=1.0)
+# intra contrastive loss
+@click.option('--IntraContrastiveLoss', 'IntraContrastiveLoss', default="src.losses.contrastive.IntraContrastiveLoss")
+@click.option('--intra_t', default=0.1, help='temperature for intra contrastive loss')
+@click.option('--intra_m', default=0.0, help='margin for inter contrastive loss')
 @click.option('--intra_weight', default=0.1)
-
 # optimizer
-@click.option('--base_lr', default=1e-4)
+@click.option('--epochs', default=10)
+@click.option('--batch_size', default=24)
+@click.option('--base_lr', default=1e-3)
 @click.option('--bert_lr', default=1e-5)
-@click.option('--milestones', default=[8, 13], multiple=True)
-@click.option('--batch_size', default=48)
-@click.option('--epochs', default=18)
-@click.option('--bert_freeze_epoch', default=4)
-@click.option('--only_iou_epoch', default=7)
-@click.option('--grad_clip', default=5.0)
+@click.option('--milestones', default=[7], multiple=True)
 @click.option('--step_gamma', default=0.1)
+@click.option('--bert_fire_start', default=1)
+@click.option('--grad_clip', default=5.0)
 # testing options
 @click.option('--test_batch_size', default=48)
 @click.option('--nms_threshold', default=0.5)
-@click.option('--recall_Ns', 'recall_Ns', default=[1, 5, 10], multiple=True)
+@click.option('--recall_Ns', 'recall_Ns', default=[1, 5], multiple=True)
 @click.option('--recall_IoUs', 'recall_IoUs', default=[0.5, 0.7], multiple=True)
 # logging
 @click.option('--logdir', default="./logs/test", type=str)
-@click.option('--result_plot_path', default="/result_plot", type=str)
-
-@click.option('--best_metric', default="avg_mAP")
-@click.option('--save_freq', default=15)
+@click.option('--best_metric', default="all/mAP@avg")
+@click.option('--save_freq', default=999)
 # visualization options (test_only)
 @click.option('--draw_rec', default=5)
 @click.option('--draw_iou', default=0.7)
@@ -115,8 +119,12 @@ def subprocess(rank, world_size, temp_dir, config):
         testing_loop_bbox_reg(config)        
     else:
         # training
+<<<<<<< HEAD
         #training_loop(config)
         training_loop_bbox_reg(config)
+=======
+        training_loop(config)
+>>>>>>> dev
 
 
 if __name__ == "__main__":

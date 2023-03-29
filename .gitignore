@@ -13,3 +13,5 @@ data
 
 logs
 *.jpg
+
+*.sh

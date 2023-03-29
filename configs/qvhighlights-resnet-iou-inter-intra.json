@@ -1,0 +1,53 @@
+{
+    "num_init_clips": 128,
+    "num_clips": 64,
+    "TrainDataset": "src.datasets.qvhighlights.QVHighlightsTrain",
+    "TestDataset": "src.datasets.qvhighlights.QVHighlightsVal",
+
+    "backbone": "src.models.resnet.ProposalConv",
+    "feat1d_out_channel": 512,
+    "feat1d_pool_kernel_size": 2,
+    "feat2d_pool_counts": [16, 8, 8],
+    "conv2d_hidden_channel": 512,
+    "conv2d_kernel_size": 9,
+    "conv2d_num_layers": 4,
+    "joint_space_size": 256,
+    "dual_space": false,
+
+    "IoULoss": "src.losses.iou.ScaledIoULoss",
+    "min_iou": 0.5,
+    "max_iou": 1.0,
+    "alpha": 0.25,
+    "gamma": 2.0,
+    "iou_weight": 1.0,
+
+    "iou_threshold": 0.75,
+    "bbox_reg_weight": 1.0,
+
+    "neg_iou": 0.5,
+    "pos_topk": 1,
+    "contrastive_decay": 0.1,
+    "contrastive_decay_start": 999,
+
+    "InterContrastiveLoss": "src.losses.contrastive.InterContrastiveLoss",
+    "inter_t": 0.1,
+    "inter_m": 0.3,
+    "inter_weight": 1.0,
+
+    "IntraContrastiveLoss": "src.losses.contrastive.IntraContrastiveLoss",
+    "intra_t": 0.1,
+    "intra_m": 0.0,
+    "intra_weight": 0.1,
+
+    "epochs": 10,
+    "batch_size": 24,
+    "base_lr": 1e-3,
+    "bert_lr": 1e-5,
+    "milestones": [999],
+    "step_gamma": 0.1,
+    "bert_fire_start": 1,
+    "grad_clip": 5.0,
+
+    "best_metric": "all/mAP@avg",
+    "logdir": "./logs/qvhighlights-resnet-iou-inter-intra"
+}
