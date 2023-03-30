@@ -92,6 +92,63 @@ class SparseMaxPool(nn.Module):
         return x2d, mask2d
 
 
+class SparsePropConv(nn.Module):
+    def __init__(self, counts, hidden_size):
+        super().__init__()
+        self.num_scale_layers = counts
+        self.hidden_size = hidden_size
+        # one conv for all scale
+        # self.conv = nn.Sequential(
+        #     nn.Conv1d(hidden_size, hidden_size, 2, 1),
+        #     nn.BatchNorm1d(hidden_size),
+        #     nn.ReLU(),
+        # )
+        # one conv for each scale
+        self.convs = nn.ModuleList()
+        for layer_idx, _ in enumerate(self.num_scale_layers):
+            self.convs.extend([
+                nn.Sequential(
+                    nn.Conv1d(hidden_size, hidden_size, 2, 1),
+                    nn.BatchNorm1d(hidden_size),
+                    nn.ReLU(),
+                )
+            ])
+
+    def forward(self, x):
+        B, C, N = x.shape
+        mask2d = torch.eye(N, N, device=x.device).bool()
+        x2d = x.new_zeros(B, C, N, N)
+
+        # offset: for which diagonal line on 2D map
+        # stride: interval of proposals to put on 2D map
+        accumulate_count = 0
+        stride, offset = 1, 0
+        for level, count in enumerate(self.num_scale_layers):  # (0, 16),  (1, 8), (1, 8)
+            for order in range(count):
+                # not first layer
+                if accumulate_count != 0:
+                    # first layer of remaining scales
+                    if order == 0:
+                        x = torch.nn.functional.max_pool1d(x, 3, 2)
+                    else:
+                        # one conv for all
+                        # x = self.conv(x)
+                        # one conv for each scale
+                        x = self.convs[level](x)
+
+                i = range(0, N - offset, stride)
+                j = range(offset, N, stride)
+                x2d[:, :, i, j] = x
+                mask2d[i, j] = 1
+                offset += stride  # offset for diagonal line
+                accumulate_count += 1
+
+            offset += stride
+            stride *= 2
+
+        return x2d, mask2d
+
+
 class LanguageModel(nn.Module):
     def __init__(self, joint_space_size, dual_space=False):
         super().__init__()

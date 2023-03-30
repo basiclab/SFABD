@@ -39,6 +39,8 @@
     "intra_m": 0.0,
     "intra_weight": 0.1,
 
+    "MultiPositiveContrastiveLoss": "src.losses.contrastive.MultiPositiveContrastiveLoss",
+
     "epochs": 10,
     "batch_size": 24,
     "base_lr": 1e-3,

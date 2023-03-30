@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 from src.misc import construct_class
 from src.models.modules import (
-    AggregateVideo, Conv1dPool, SparseMaxPool, LanguageModel)
+    AggregateVideo, Conv1dPool, SparseMaxPool, SparsePropConv, LanguageModel)
 
 
 # cos sim between 2D proposal map and query
@@ -107,6 +107,7 @@ class MMN(nn.Module):
                 feat1d_pool_stride_size,
             ),                                              # [B, C, N]
             SparseMaxPool(feat2d_pool_counts),              # [B, C, N, N]
+            # SparsePropConv(feat2d_pool_counts, feat1d_out_channel),
             construct_class(
                 backbone,
                 in_channel=feat1d_out_channel,

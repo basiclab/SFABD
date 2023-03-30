@@ -168,6 +168,92 @@ def train_epoch(
             **loss_inter_metrics,
             **loss_intra_metrics,
         }
+
+        for key, value in metrics.items():
+            losses[key].append(value.cpu())
+
+        # update progress bar
+        pbar.set_postfix_str(f"loss: {loss.item():.2f}")
+    pbar.close()
+
+    losses = {key: torch.stack(value).mean() for key, value in losses.items()}
+
+    return pred_moments, true_moments, losses
+
+
+def train_epoch_mp_con(
+    model: torch.nn.Module,
+    loader: torch.utils.data.DataLoader,
+    optimizer: torch.optim.Optimizer,
+    loss_iou_fn: torch.nn.Module,
+    loss_mpcon_fn: torch.nn.Module,
+    epoch: int,
+    config: AttrDict,
+):
+    device = dist.get_device()
+    model.train()
+    pbar = tqdm(        # progress bar for each epoch
+        loader,         # length is determined by the number of batches
+        ncols=0,        # disable bar, only show percentage
+        leave=False,    # when the loop is finished, the bar will be removed
+        disable=not dist.is_main(),
+        desc=f"Epoch {epoch}",
+    )
+    losses = defaultdict(list)
+    pred_moments = []
+    true_moments = []
+    for batch, _ in pbar:
+        batch = {key: value.to(device) for key, value in batch.items()}
+        iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips)
+        iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])
+
+        video_feats, sents_feats, logits2d, scores2ds, mask2d = model(**batch)
+        loss_iou, loss_iou_metrics = loss_iou_fn(
+            logits2d=logits2d,
+            iou2d=iou2d,
+            mask2d=mask2d)
+
+        # testing MultiPositiveContrastive
+        loss_mpcon, loss_mpcon_metrics = loss_mpcon_fn(
+            video_feats=video_feats,
+            sents_feats=sents_feats,
+            num_sentences=batch['num_sentences'],
+            num_targets=batch['num_targets'],
+            iou2d=iou2d,
+            iou2ds=iou2ds,
+            mask2d=mask2d,
+        )
+
+        if epoch < config.contrastive_decay_start:
+            loss = \
+                loss_iou + loss_mpcon
+        else:
+            loss = \
+                loss_iou + loss_mpcon * config.contrastive_decay
+
+        loss.backward()
+        if config.grad_clip > 0:
+            clip_grad_norm_(model.parameters(), config.grad_clip)
+        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
+
+        out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
+        pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
+        pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
+        pred_moments.append(pred_moments_batch)
+
+        true_moments_batch = {
+            'tgt_moments': batch['tgt_moments'],
+            'num_targets': batch['num_targets'],
+        }
+        true_moments_batch = dist.gather_dict(true_moments_batch, to_cpu=True)
+        true_moments.append(true_moments_batch)
+
+        metrics = {
+            'loss/total': loss,
+            **loss_iou_metrics,
+            **loss_mpcon_metrics,
+        }
         for key, value in metrics.items():
             losses[key].append(value.cpu())
 
@@ -230,6 +316,18 @@ def training_loop(config: AttrDict):
         neg_iou=config.neg_iou,
         pos_topk=config.pos_topk,
         weight=config.intra_weight,
+    )
+
+    # testing MultiPositiveContrastive
+    loss_mpcon_fn = construct_class(
+        config.MultiPositiveContrastiveLoss,
+        t=config.inter_t,
+        inter_m=config.inter_m,
+        intra_m=config.intra_m,
+        neg_iou=config.neg_iou,
+        pos_topk=config.pos_topk,
+        inter_weight=config.inter_weight,
+        intra_weight=config.intra_weight,
     )
 
     # model
@@ -305,9 +403,16 @@ def training_loop(config: AttrDict):
             model = SyncBatchNorm.convert_sync_batchnorm(model_local)
             model = DistributedDataParallel(model, device_ids=[device])
 
+        # original inter, intra contrastive
         train_pred_moments, train_true_moments, train_losses = train_epoch(
             model, train_loader, optimizer,
             loss_iou_fn, loss_inter_fn, loss_intra_fn, epoch, config)
+
+        # MultiPositive Contrastive
+        # train_pred_moments, train_true_moments, train_losses = train_epoch_mp_con(
+        #     model, train_loader, optimizer,
+        #     loss_iou_fn, loss_mpcon_fn, epoch, config)
+
         test_pred_moments, test_true_moments = test_epoch(
             model, test_loader, epoch, config)
         scheduler.step()

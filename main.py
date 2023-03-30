@@ -4,13 +4,8 @@ import tempfile
 import click
 import torch.multiprocessing
 
-<<<<<<< HEAD
-from src.training import training_loop, training_loop_bbox_reg
-from src.testing import testing_loop, testing_loop_bbox_reg
-=======
 from src.training import training_loop
 from src.testing import testing_loop
->>>>>>> dev
 from src.misc import AttrDict, CommandAwareConfig
 
 
@@ -33,14 +28,9 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--conv2d_kernel_size', default=5)
 @click.option('--conv2d_num_layers', default=8)
 @click.option('--joint_space_size', default=256)
-<<<<<<< HEAD
-
-# confidence loss (Focal or BCE loss)
-=======
 @click.option('--dual_space/--no-dual_space', default=False)
 # confidence loss
 @click.option('--IoULoss', 'IoULoss', default="src.losses.iou.ScaledIoULoss")
->>>>>>> dev
 @click.option('--min_iou', default=0.5)
 @click.option('--max_iou', default=1.0)
 @click.option('--alpha', default=0.25)
@@ -64,6 +54,8 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--intra_t', default=0.1, help='temperature for intra contrastive loss')
 @click.option('--intra_m', default=0.0, help='margin for inter contrastive loss')
 @click.option('--intra_weight', default=0.1)
+# multi positive contrastive loss
+@click.option('--MultiPositiveContrastiveLoss', 'MultiPositiveContrastiveLoss', default="src.losses.contrastive.MultiPositiveContrastiveLoss")
 # optimizer
 @click.option('--epochs', default=10)
 @click.option('--batch_size', default=24)
@@ -115,16 +107,10 @@ def subprocess(rank, world_size, temp_dir, config):
 
     if config.test_only:
         # testing
-        #testing_loop(config)
-        testing_loop_bbox_reg(config)        
+        testing_loop(config)
     else:
         # training
-<<<<<<< HEAD
-        #training_loop(config)
-        training_loop_bbox_reg(config)
-=======
         training_loop(config)
->>>>>>> dev
 
 
 if __name__ == "__main__":

@@ -166,9 +166,9 @@ def calculate_mAPs(
 
         # short/medium/long
         tgt_length = sample_tgt_moments[:, 1] - sample_tgt_moments[:, 0]
-        short_mask = tgt_length.lt(0.15)
-        medium_mask = tgt_length.ge(0.15) * tgt_length.lt(0.5)
-        long_mask = tgt_length.gt(0.5)
+        short_mask = tgt_length.lt(0.05)
+        medium_mask = tgt_length.ge(0.05) * tgt_length.lt(0.4)
+        long_mask = tgt_length.gt(0.4)
 
         if short_mask.sum() > 0:
             calc_buffer_short.append([
