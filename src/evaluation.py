@@ -10,6 +10,8 @@ from src.utils import iou
 def recall_name(rec_n: int, iou_v: float) -> str:
     return f'R@{rec_n:d},IoU={iou_v:.1f}'
 
+def multi_recall_name(rec_n: int, iou_v: float) -> str:
+    return f'R@({rec_n:d}/5),IoU={iou_v:.1f}'
 
 def mAP_name(iou_threshold: float) -> str:
     return f'mAP@{iou_threshold:.2f}'
@@ -85,6 +87,59 @@ def calculate_recall(
             max_ious = ious[:, :recall_n].max(dim=1).values
             tp = (max_ious >= recall_iou).long().sum().item()
             recall[recall_name(recall_n, recall_iou)] = tp / len(ious)
+
+    return recall
+
+
+def calculate_multi_recall(
+    pred_moments: List[Dict[str, torch.Tensor]],
+    true_moments: List[Dict[str, torch.Tensor]],
+    recall_Ns: List[float],
+    recall_IoUs: List[float],
+) -> Dict[str, float]:
+    """
+    Returns: {
+        "R@(5,5),IoU0.5": 0.xx,
+        "R@(5,5),IoU0.7": 0.xx,
+        ...
+    }
+    """
+    pred_moments = batchs2results(pred_moments)
+    out_moments = pred_moments['out_moments']
+    num_proposals = pred_moments['num_proposals']
+
+    true_moments = batchs2results(true_moments)
+    tgt_moments = true_moments['tgt_moments']
+    num_targets = true_moments['num_targets']
+
+    calc_buffer = []
+    shift_p = 0
+    shift_t = 0
+    for num_p, num_t in zip(num_proposals, num_targets):
+        calc_buffer.append([
+            tgt_moments[shift_t: shift_t + num_t],
+            out_moments[shift_p: shift_p + num_p],
+        ])
+        shift_p += num_p
+        shift_t += num_t
+
+    max_N = max(recall_Ns)
+    ious = []
+    for data in tqdm(calc_buffer, ncols=0, leave=False, desc="Recall",
+                     disable=not dist.is_main()):
+        ious.append(calculate_recall_worker(*data, pad=max_N))
+    ious = torch.cat(ious)  # [5 targets * 1000 samples, 5 proposals]
+    recall = {}
+    for recall_n in recall_Ns:
+        for recall_iou in recall_IoUs:
+            shift_t = 0
+            recall_list = []
+            for num_t in num_targets:
+                max_ious = ious[shift_t:shift_t + num_t, :recall_n].max(dim=1).values
+                rec = float((max_ious >= recall_iou).long().sum().item() / num_t)
+                recall_list.append(rec)
+                shift_t += num_t    
+            recall[multi_recall_name(recall_n, recall_iou)] = sum(recall_list) / len(recall_list)
 
     return recall
 

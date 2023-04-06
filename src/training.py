@@ -12,8 +12,8 @@ from torch.utils.data import DataLoader, DistributedSampler
 from tqdm import tqdm
 
 import src.dist as dist
-from src.evaluation import calculate_recall, calculate_mAPs
-from src.misc import AttrDict, set_seed, construct_class, print_metrics
+from src.evaluation import calculate_recall, calculate_multi_recall, calculate_mAPs
+from src.misc import AttrDict, set_seed, construct_class, print_metrics, print_multi_recall
 from src.models.main import MMN
 from src.utils import (
     nms, scores2ds_to_moments, moments_to_iou2ds, iou2ds_to_iou2d,
@@ -113,10 +113,6 @@ def train_epoch(
         iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])
 
         video_feats, sents_feats, logits2d, scores2ds, mask2d = model(**batch)
-        loss_iou, loss_iou_metrics = loss_iou_fn(
-            logits2d=logits2d,
-            iou2d=iou2d,
-            mask2d=mask2d)
         loss_inter, loss_inter_metrics = loss_inter_fn(
             video_feats=video_feats,
             sents_feats=sents_feats,
@@ -126,6 +122,16 @@ def train_epoch(
             iou2ds=iou2ds,
             mask2d=mask2d,
         )
+        #  return neg mask
+        # loss_inter, loss_inter_metrics, neg_mask = loss_inter_fn(
+        #     video_feats=video_feats,
+        #     sents_feats=sents_feats,
+        #     num_sentences=batch['num_sentences'],
+        #     num_targets=batch['num_targets'],
+        #     iou2d=iou2d,
+        #     iou2ds=iou2ds,
+        #     mask2d=mask2d,
+        # )
         loss_intra, loss_intra_metrics = loss_intra_fn(
             video_feats=video_feats,
             sents_feats=sents_feats,
@@ -134,6 +140,13 @@ def train_epoch(
             iou2d=iou2d,
             iou2ds=iou2ds,
             mask2d=mask2d,
+        )
+        # also do false negative removal
+        loss_iou, loss_iou_metrics = loss_iou_fn(
+            logits2d=logits2d,
+            iou2d=iou2d,
+            mask2d=mask2d,
+            # neg_mask=neg_mask,
         )
 
         if epoch < config.contrastive_decay_start:
@@ -292,6 +305,20 @@ def training_loop(config: AttrDict):
         num_workers=min(torch.get_num_threads(), 8),
     )
 
+    if "charades" in config.TrainDataset or "activity" in config.TrainDataset:
+        # re-annotated multi-test Dataset and DataLoader
+        multi_test_dataset = construct_class(config.MultiTestDataset)
+        multi_test_sampler = DistributedSampler(multi_test_dataset,
+                                                shuffle=False,
+                                                seed=config.seed)
+        multi_test_loader = DataLoader(
+            dataset=multi_test_dataset,
+            batch_size=config.test_batch_size // dist.get_world_size(),
+            collate_fn=multi_test_dataset.collate_fn,
+            sampler=multi_test_sampler,
+            num_workers=min(torch.get_num_threads(), 8),
+        )
+
     # loss functions
     loss_iou_fn = construct_class(
         config.IoULoss,
@@ -307,6 +334,7 @@ def training_loop(config: AttrDict):
         m=config.inter_m,
         neg_iou=config.neg_iou,
         pos_topk=config.pos_topk,
+        top_neg_removal_percent=config.top_neg_removal_percent,
         weight=config.inter_weight,
     )
     loss_intra_fn = construct_class(
@@ -315,20 +343,21 @@ def training_loop(config: AttrDict):
         m=config.intra_m,
         neg_iou=config.neg_iou,
         pos_topk=config.pos_topk,
+        top_neg_removal_percent=config.top_neg_removal_percent,
         weight=config.intra_weight,
     )
 
     # testing MultiPositiveContrastive
-    loss_mpcon_fn = construct_class(
-        config.MultiPositiveContrastiveLoss,
-        t=config.inter_t,
-        inter_m=config.inter_m,
-        intra_m=config.intra_m,
-        neg_iou=config.neg_iou,
-        pos_topk=config.pos_topk,
-        inter_weight=config.inter_weight,
-        intra_weight=config.intra_weight,
-    )
+    # loss_mpcon_fn = construct_class(
+    #     config.MultiPositiveContrastiveLoss,
+    #     t=config.inter_t,
+    #     inter_m=config.inter_m,
+    #     intra_m=config.intra_m,
+    #     neg_iou=config.neg_iou,
+    #     pos_topk=config.pos_topk,
+    #     inter_weight=config.inter_weight,
+    #     intra_weight=config.intra_weight,
+    # )
 
     # model
     model_local = MMN(
@@ -368,6 +397,11 @@ def training_loop(config: AttrDict):
 
     # evaluate test set before the start of training
     test_pred_moments, test_true_moments = test_epoch(model, test_loader, 0, config)
+    # multi testing
+    if "charades" in config.TrainDataset or "activity" in config.TrainDataset:
+        multi_test_pred_moments, multi_test_true_moments = \
+            test_epoch(model, multi_test_loader, 0, config)
+
     if dist.is_main():
         os.makedirs(config.logdir, exist_ok=True)
         os.makedirs(os.path.join(config.logdir, "plots"), exist_ok=True)
@@ -381,16 +415,28 @@ def training_loop(config: AttrDict):
             test_pred_moments, test_true_moments,
             config.recall_Ns, config.recall_IoUs)
         test_mAPs = calculate_mAPs(test_pred_moments, test_true_moments)
+        # multi testing
+        if "charades" in config.TrainDataset or "activity" in config.TrainDataset:
+            test_multi_recall = calculate_multi_recall(
+                multi_test_pred_moments, multi_test_true_moments,
+                [5,], config.recall_IoUs)
+
         for name, value in test_recall.items():
             test_writer.add_scalar(f'recall/{name}', value, 0)
         for name, value in test_mAPs.items():
             test_writer.add_scalar(f'mAP/{name}', value, 0)
+        if "charades" in config.TrainDataset or "activity" in config.TrainDataset:
+            for name, value in test_multi_recall.items():
+                test_writer.add_scalar(f'recall/{name}', value, 0)
 
         # print to terminal
         print("Epoch 0")
         print_metrics(test_mAPs, test_recall)
+        print_multi_recall(test_multi_recall)
         best_recall = test_recall
         best_mAPs = test_mAPs
+        if "charades" in config.TrainDataset or "activity" in config.TrainDataset:
+            best_multi_recall = test_multi_recall
     dist.barrier()
 
     for epoch in range(1, config.epochs + 1):
@@ -415,6 +461,11 @@ def training_loop(config: AttrDict):
 
         test_pred_moments, test_true_moments = test_epoch(
             model, test_loader, epoch, config)
+        
+        if "charades" in config.TrainDataset or "activity" in config.TrainDataset:
+            multi_test_pred_moments, multi_test_true_moments = \
+                test_epoch(model, multi_test_loader, epoch, config)
+
         scheduler.step()
 
         if dist.is_main():
@@ -441,14 +492,24 @@ def training_loop(config: AttrDict):
                 test_pred_moments, test_true_moments,
                 config.recall_Ns, config.recall_IoUs)
             test_mAPs = calculate_mAPs(test_pred_moments, test_true_moments)
+            # multi testing
+            if "charades" in config.TrainDataset or "activity" in config.TrainDataset:
+                test_multi_recall = calculate_multi_recall(
+                    multi_test_pred_moments, multi_test_true_moments,
+                    [5,], config.recall_IoUs)
+
             for name, value in test_recall.items():
                 test_writer.add_scalar(f'recall/{name}', value, epoch)
             for name, value in test_mAPs.items():
                 test_writer.add_scalar(f'mAP/{name}', value, epoch)
+            if "charades" in config.TrainDataset or "activity" in config.TrainDataset:
+                for name, value in test_multi_recall.items():
+                    test_writer.add_scalar(f'recall/{name}', value, epoch)
 
             # show recall and mAPs in terminal
             print(f"Epoch {epoch}")
             print_metrics(test_mAPs, test_recall)
+            print_multi_recall(test_multi_recall)
 
             # save last checkpoint
             state = {
@@ -465,17 +526,28 @@ def training_loop(config: AttrDict):
                 torch.save(state, path)
 
             # save best checkpoint
-            if test_mAPs[config.best_metric] > best_mAPs[config.best_metric]:
-                best_recall = test_recall
-                best_mAPs = test_mAPs
-                path = os.path.join(config.logdir, f"best.pth")
-                torch.save(state, path)
+            if "charades" or "activity" in config.TrainDataset:
+                if test_recall[config.best_metric] > best_recall[config.best_metric]:
+                    best_recall = test_recall
+                    best_mAPs = test_mAPs
+                    best_multi_recall = test_multi_recall
+                    path = os.path.join(config.logdir, f"best.pth")
+                    torch.save(state, path)
+            elif "qvhighlights" in config.TrainDataset:
+                if test_mAPs[config.best_metric] > best_mAPs[config.best_metric]:
+                    best_recall = test_recall
+                    best_mAPs = test_mAPs
+                    path = os.path.join(config.logdir, f"best.pth")
+                    torch.save(state, path)
 
             # log best results
             for name, value in best_recall.items():
                 test_writer.add_scalar(f'best/{name}', value, epoch)
             for name, value in best_mAPs.items():
                 test_writer.add_scalar(f'best/{name}', value, epoch)
+            if "charades" in config.TrainDataset or "activity" in config.TrainDataset:
+                for name, value in best_multi_recall.items():
+                    test_writer.add_scalar(f'best/{name}', value, epoch)
 
             # flush to disk
             train_writer.flush()
@@ -492,10 +564,12 @@ def training_loop(config: AttrDict):
                     },
                     'test': {
                         'recall': test_recall,
+                        'multi_recall': test_multi_recall,
                         'mAP': test_mAPs,
                     },
                     'best_test': {
                         'recall': best_recall,
+                        'multi_recall': best_multi_recall,
                         'mAP': best_mAPs,
                     }
                 }

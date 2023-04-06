@@ -19,6 +19,7 @@ from src.misc import AttrDict, CommandAwareConfig
 # datasets
 @click.option('--TrainDataset', "TrainDataset", default='src.datasets.charades.Charades')
 @click.option('--TestDataset', "TestDataset", default='src.datasets.charades.Charades')
+@click.option('--MultiTestDataset', "MultiTestDataset", default='src.datasets.charades.CharadesSTAI3DMultiTest')
 # model
 @click.option('--backbone', default="src.models.resnet.ProposalConv")
 @click.option('--feat1d_out_channel', default=512)
@@ -42,6 +43,7 @@ from src.misc import AttrDict, CommandAwareConfig
 # contrastive loss common settings
 @click.option('--neg_iou', default=0.5)
 @click.option('--pos_topk', default=1)
+@click.option('--top_neg_removal_percent', default=0.01)
 @click.option('--contrastive_decay', default=0.1)
 @click.option('--contrastive_decay_start', default=6)
 # inter contrastive loss

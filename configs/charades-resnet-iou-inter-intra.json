@@ -1,8 +1,9 @@
 {
     "num_init_clips": 32,
     "num_clips": 16,
-    "TrainDataset": "src.datasets.charades.CharadesSTATrain",
-    "TestDataset": "src.datasets.charades.CharadesSTATest",
+    "TrainDataset": "src.datasets.charades.CharadesSTAI3DTrain",
+    "TestDataset": "src.datasets.charades.CharadesSTAI3DTest",
+    "MultiTestDataset": "src.datasets.charades.CharadesSTAI3DMultiTest",
 
     "backbone": "src.models.resnet.ProposalConv",
     "feat1d_out_channel": 512,
@@ -12,9 +13,9 @@
     "conv2d_kernel_size": 5,
     "conv2d_num_layers": 8,
     "joint_space_size": 256,
-    "dual_space": true,
+    "dual_space": false,
 
-    "IoULoss": "src.losses.iou.ScaledIoUFocalLoss",
+    "IoULoss": "src.losses.iou.ScaledIoULoss",
     "min_iou": 0.5,
     "max_iou": 1.0,
     "alpha": 0.25,
@@ -22,8 +23,6 @@
     "iou_weight": 1.0,
 
     "iou_threshold": 0.75,
-    "bbox_reg_weight": 1.0,
-
     "neg_iou": 0.5,
     "pos_topk": 1,
     "contrastive_decay": 0.1,
@@ -37,9 +36,9 @@
     "IntraContrastiveLoss": "src.losses.contrastive.IntraContrastiveLoss",
     "intra_t": 0.1,
     "intra_m": 0.0,
-    "intra_weight": 0.0,
+    "intra_weight": 0.1,
 
-    "epochs": 15,
+    "epochs": 10,
     "batch_size": 48,
     "base_lr": 1e-3,
     "bert_lr": 1e-5,
@@ -49,5 +48,5 @@
     "grad_clip": 5.0,
 
     "best_metric": "R@1,IoU=0.7",
-    "logdir": "./logs/charades-resnet-iou-inter-intra-focal"
+    "logdir": "./logs/charades-resnet-iou-inter-intra"
 }

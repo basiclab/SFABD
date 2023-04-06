@@ -42,6 +42,7 @@ class CollateBase(torch.utils.data.Dataset):
                 for timestamp in anno['timestamps']:
                     timestamp = torch.Tensor(timestamp)
                     timestamp = torch.clamp(timestamp / duration, 0, 1)
+
                     if timestamp[0] < timestamp[1]:
                         timestamps.append(timestamp)
                     else:
@@ -68,7 +69,6 @@ class CollateBase(torch.utils.data.Dataset):
                     'qids': torch.tensor(qids),
                 })
         pbar.close()
-
         return annos
 
     def __len__(self):

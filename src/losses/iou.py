@@ -36,6 +36,7 @@ class ScaledIoULoss(nn.Module):
         iou1d = iou2d.masked_select(mask2d).view(S, -1)         # [S, P]
         iou1d = self.linear_scale(iou1d)                        # [S, P]
         loss = F.binary_cross_entropy_with_logits(logits1d, iou1d)
+
         return (
             loss * self.weight,
             {

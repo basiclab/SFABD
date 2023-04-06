@@ -26,6 +26,7 @@
 
     "neg_iou": 0.5,
     "pos_topk": 1,
+    "top_neg_removal_percent": 0.01,
     "contrastive_decay": 0.1,
     "contrastive_decay_start": 5,
 

@@ -1,16 +1,17 @@
 {
-    "num_init_clips": 128,
-    "num_clips": 64,
-    "TrainDataset": "src.datasets.qvhighlights.QVHighlightsTrain",
-    "TestDataset": "src.datasets.qvhighlights.QVHighlightsVal",
+    "num_init_clips": 32,
+    "num_clips": 16,
+    "TrainDataset": "src.datasets.charades.CharadesSTAI3DTrain",
+    "TestDataset": "src.datasets.charades.CharadesSTAI3DTest",
+    "MultiTestDataset": "src.datasets.charades.CharadesSTAI3DMultiTest",
 
     "backbone": "src.models.resnet.ProposalConv",
     "feat1d_out_channel": 512,
     "feat1d_pool_kernel_size": 2,
-    "feat2d_pool_counts": [16, 8, 8],
+    "feat2d_pool_counts": [16],
     "conv2d_hidden_channel": 512,
-    "conv2d_kernel_size": 9,
-    "conv2d_num_layers": 4,
+    "conv2d_kernel_size": 5,
+    "conv2d_num_layers": 8,
     "joint_space_size": 256,
     "dual_space": false,
 
@@ -22,11 +23,8 @@
     "iou_weight": 1.0,
 
     "iou_threshold": 0.75,
-    "bbox_reg_weight": 1.0,
-
     "neg_iou": 0.5,
     "pos_topk": 1,
-    "top_neg_removal_percent": 0.01,
     "contrastive_decay": 0.1,
     "contrastive_decay_start": 999,
 
@@ -38,12 +36,10 @@
     "IntraContrastiveLoss": "src.losses.contrastive.IntraContrastiveLoss",
     "intra_t": 0.1,
     "intra_m": 0.0,
-    "intra_weight": 0.1,
-
-    "MultiPositiveContrastiveLoss": "src.losses.contrastive.MultiPositiveContrastiveLoss",
+    "intra_weight": 0.0,
 
     "epochs": 10,
-    "batch_size": 24,
+    "batch_size": 48,
     "base_lr": 1e-3,
     "bert_lr": 1e-5,
     "milestones": [999],
@@ -51,6 +47,6 @@
     "bert_fire_start": 1,
     "grad_clip": 5.0,
 
-    "best_metric": "all/mAP@avg",
-    "logdir": "./logs/qvhighlights-resnet-iou-inter-intra"
+    "best_metric": "R@1,IoU=0.7",
+    "logdir": "./logs/charades-resnet-iou-inter"
 }
