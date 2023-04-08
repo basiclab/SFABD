@@ -21,7 +21,6 @@ class AggregateVideo(nn.Module):
         feats_bucket = []
         for i in range(self.tgt_num):
             s, e = idxs[i], idxs[i + 1]
-            # print(f"s:{s}, e:{e}")
             if s < e:
                 feats_bucket.append(video_feats[s:e].mean(dim=0))
             else:

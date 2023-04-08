@@ -1,6 +1,8 @@
 import json
+import os
 
 import h5py
+import numpy as np
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
@@ -9,57 +11,14 @@ from src.datasets.base import CollateBase
 from src import dist
 
 
-class ActivityNet(CollateBase):
+class ActivityNetC3D(CollateBase):
     def __init__(
         self,
         ann_file,
-        feat_file='./data/ActivityNet/activitynet_v1-3_c3d.hdf5'
+        feat_file='./data/ActivityNet/C3D/activitynet_v1-3_c3d.hdf5'
     ):
         super().__init__(ann_file)
         self.feat_file = feat_file
-
-    def parse_anno(self, ann_file):
-        with open(ann_file, 'r') as f:
-            raw_annos = json.load(f)
-
-        annos = []
-        pbar = tqdm(
-            raw_annos.items(),
-            ncols=0,
-            leave=False,
-            desc=self.__class__.__name__,
-            disable=not dist.is_main()
-        )
-        for vid, video_data in pbar:
-            duration = torch.tensor(video_data['duration'])
-            sentences = []
-            tgt_moments = []
-            num_targets = []
-            qids = []
-            assert 'timestamps' in video_data, 'No timestamps found'
-            for timestamp, sentence in zip(
-                    video_data['timestamps'], video_data['sentences']):
-                timestamp = torch.Tensor(timestamp)
-                timestamp = torch.clamp(timestamp / duration, 0, 1)
-                if timestamp[0] < timestamp[1]:
-                    sentences.append(sentence)
-                    tgt_moments.append(timestamp.view(1, 2))
-                    num_targets.append(torch.tensor(1))
-                    qids.append(0)
-
-            if len(sentences) != 0:
-                annos.append({
-                    'vid': vid,
-                    'sentences': sentences,
-                    'num_sentences': torch.tensor(len(sentences)),
-                    'num_targets': torch.stack(num_targets, dim=0),
-                    'tgt_moments': torch.cat(tgt_moments, dim=0),
-                    'duration': duration,
-                    'qids': torch.tensor(qids),
-                })
-        pbar.close()
-
-        return annos
 
     def get_feat_dim(self):
         return 500
@@ -73,16 +32,67 @@ class ActivityNet(CollateBase):
         return feats
 
 
-class ActivityNetTrain(ActivityNet):
+class ActivityNetC3DTrain(ActivityNetC3D):
     def __init__(self):
         super().__init__(ann_file='./data/ActivityNet/train.json')
 
 
-class ActivityNetVal(ActivityNet):
+class ActivityNetC3DVal(ActivityNetC3D):
     def __init__(self):
         super().__init__(ann_file='./data/ActivityNet/val.json')
 
 
-class ActivityNetTest(ActivityNet):
+class ActivityNetC3DTest(ActivityNetC3D):
     def __init__(self):
         super().__init__(ann_file='./data/ActivityNet/test.json')
+
+        
+class ActivityNetC3DMultiTest(ActivityNetC3D):
+    def __init__(self):
+        super().__init__(ann_file='./data/ActivityNet/multi_test.json')
+
+
+class ActivityNetI3D(CollateBase):
+    def __init__(
+        self,
+        ann_file,
+        feat_dir="./data/ActivityNet/I3D/"
+    ):
+        super().__init__(ann_file)
+        self.feat_dir = feat_dir
+
+    def get_feat_dim(self):
+        return 1024
+
+    # override
+    def get_feat(self, anno):
+        path = os.path.join(self.feat_dir, f"{anno['vid']}.npy")
+        feats = np.load(path, 'r')                  # [seq_len, 1, 1, 1024]
+        feats = torch.from_numpy(feats.copy()).float()
+        feats = feats.squeeze(1).squeeze(1)         # [seq_len, 1024]
+        feats = F.normalize(feats, dim=-1)
+        return feats
+
+
+class ActivityNetI3DTrain(ActivityNetI3D):
+    def __init__(self):
+        super().__init__(
+            ann_file='./data/ActivityNet/train.json')
+
+
+class ActivityNetI3DVal(ActivityNetI3D):
+    def __init__(self):
+        super().__init__(
+            ann_file='./data/ActivityNet/val.json')
+
+
+class ActivityNetI3DTest(ActivityNetI3D):
+    def __init__(self):
+        super().__init__(
+            ann_file='./data/ActivityNet/test.json')
+
+
+class ActivityNetI3DMultiTest(ActivityNetI3D):
+    def __init__(self):
+        super().__init__(
+            ann_file='./data/ActivityNet/multi_test.json')

@@ -1,10 +1,11 @@
 {
     "num_init_clips": 128,
     "num_clips": 64,
-    "TrainDataset": "src.datasets.qvhighlights.QVHighlightsTrain",
-    "TestDataset": "src.datasets.qvhighlights.QVHighlightsVal",
+    "TrainDataset": "src.datasets.activitynet.ActivityNetI3DTrain",
+    "TestDataset": "src.datasets.activitynet.ActivityNetI3DTest",
+    "MultiTestDataset": "src.datasets.activitynet.ActivityNetI3DMultiTest",
 
-    "backbone": "src.models.cnn.ProposalConv",
+    "backbone": "src.models.resnet.ProposalConv",
     "feat1d_out_channel": 512,
     "feat1d_pool_kernel_size": 2,
     "feat2d_pool_counts": [16, 8, 8],
@@ -32,22 +33,22 @@
     "InterContrastiveLoss": "src.losses.contrastive.InterContrastiveLoss",
     "inter_t": 0.1,
     "inter_m": 0.3,
-    "inter_weight": 1.0,
+    "inter_weight": 0.1,
 
     "IntraContrastiveLoss": "src.losses.contrastive.IntraContrastiveLoss",
     "intra_t": 0.1,
     "intra_m": 0.0,
-    "intra_weight": 0.0,
+    "intra_weight": 0.1,
 
     "epochs": 10,
     "batch_size": 24,
-    "base_lr": 8e-4,
-    "bert_lr": 8e-5,
-    "milestones": [8],
+    "base_lr": 1e-3,
+    "bert_lr": 1e-5,
+    "milestones": [999],
     "step_gamma": 0.1,
     "bert_fire_start": 1,
     "grad_clip": 5.0,
 
-    "best_metric": "all/mAP@avg",
-    "logdir": "./logs/qvhighlights-cnn-iou-inter"
+    "best_metric": "R@1,IoU=0.7",
+    "logdir": "./logs/activitynet-I3D-resnet-iou-inter-intra"
 }

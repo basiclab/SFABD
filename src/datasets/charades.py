@@ -69,19 +69,19 @@ class CharadesI3D(CollateBase):
 class CharadesSTAI3DTrain(CharadesI3D):
     def __init__(self):
         super().__init__(
-            ann_file="./data/CharadesSTA/I3D/charades_train.json",
+            ann_file="./data/CharadesSTA/charades_train.json",
             feat_dir="./data/CharadesSTA/I3D/features/")
 
 
 class CharadesSTAI3DTest(CharadesI3D):
     def __init__(self):
         super().__init__(
-            ann_file="./data/CharadesSTA/I3D/charades_test.json",
+            ann_file="./data/CharadesSTA/charades_test.json",
             feat_dir="./data/CharadesSTA/I3D/features/")
 
 
 class CharadesSTAI3DMultiTest(CharadesI3D):
     def __init__(self):
         super().__init__(
-            ann_file="./data/CharadesSTA/I3D/charades_multi_test.json",
+            ann_file="./data/CharadesSTA/charades_multi_test.json",
             feat_dir="./data/CharadesSTA/I3D/features/")

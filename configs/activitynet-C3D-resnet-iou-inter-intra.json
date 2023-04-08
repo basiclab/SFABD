@@ -1,10 +1,11 @@
 {
     "num_init_clips": 128,
     "num_clips": 64,
-    "TrainDataset": "src.datasets.qvhighlights.QVHighlightsTrain",
-    "TestDataset": "src.datasets.qvhighlights.QVHighlightsVal",
+    "TrainDataset": "src.datasets.activitynet.ActivityNetC3DTrain",
+    "TestDataset": "src.datasets.activitynet.ActivityNetC3DTest",
+    "MultiTestDataset": "src.datasets.activitynet.ActivityNetC3DMultiTest",
 
-    "backbone": "src.models.cnn.ProposalConv",
+    "backbone": "src.models.resnet.ProposalConv",
     "feat1d_out_channel": 512,
     "feat1d_pool_kernel_size": 2,
     "feat2d_pool_counts": [16, 8, 8],
@@ -14,7 +15,7 @@
     "joint_space_size": 256,
     "dual_space": false,
 
-    "IoULoss": "src.losses.iou.ScaledIoUFocalLoss",
+    "IoULoss": "src.losses.iou.ScaledIoULoss",
     "min_iou": 0.5,
     "max_iou": 1.0,
     "alpha": 0.25,
@@ -32,7 +33,7 @@
     "InterContrastiveLoss": "src.losses.contrastive.InterContrastiveLoss",
     "inter_t": 0.1,
     "inter_m": 0.3,
-    "inter_weight": 1.0,
+    "inter_weight": 0.1,
 
     "IntraContrastiveLoss": "src.losses.contrastive.IntraContrastiveLoss",
     "intra_t": 0.1,
@@ -41,13 +42,13 @@
 
     "epochs": 10,
     "batch_size": 24,
-    "base_lr": 8e-4,
-    "bert_lr": 8e-5,
-    "milestones": [8],
+    "base_lr": 1e-3,
+    "bert_lr": 1e-5,
+    "milestones": [999],
     "step_gamma": 0.1,
     "bert_fire_start": 1,
     "grad_clip": 5.0,
 
-    "best_metric": "all/mAP@avg",
-    "logdir": "./logs/qvhighlights-cnn-focal-inter-intra"
+    "best_metric": "R@1,IoU=0.7",
+    "logdir": "./logs/activitynet-C3D-resnet-iou-inter-intra"
 }

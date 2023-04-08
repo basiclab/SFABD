@@ -197,7 +197,8 @@ class ProposalConv(MaskedResNet):
             hidden_channel,
             out_channel,
             BasicBlock,
-            [2, 2, 2, 2]
+            [2, 2, 2, 2]   # resnet-18
+            # [3, 4, 6, 3]    # resnet-34
         )
         self.dual_space = dual_space
 
