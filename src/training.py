@@ -374,10 +374,10 @@ def training_loop(config: AttrDict):
         joint_space_size=config.joint_space_size,
         dual_space=config.dual_space,
     ).to(device)
+
     model = SyncBatchNorm.convert_sync_batchnorm(model_local)
     model = DistributedDataParallel(
         model, device_ids=[device], find_unused_parameters=True)
-
     bert_params = []
     base_params = []
     for name, params in model.named_parameters():
@@ -432,7 +432,8 @@ def training_loop(config: AttrDict):
         # print to terminal
         print("Epoch 0")
         print_metrics(test_mAPs, test_recall)
-        print_multi_recall(test_multi_recall)
+        if "charades" in config.TrainDataset or "activity" in config.TrainDataset:
+            print_multi_recall(test_multi_recall)
         best_recall = test_recall
         best_mAPs = test_mAPs
         if "charades" in config.TrainDataset or "activity" in config.TrainDataset:
@@ -461,7 +462,7 @@ def training_loop(config: AttrDict):
 
         test_pred_moments, test_true_moments = test_epoch(
             model, test_loader, epoch, config)
-        
+
         if "charades" in config.TrainDataset or "activity" in config.TrainDataset:
             multi_test_pred_moments, multi_test_true_moments = \
                 test_epoch(model, multi_test_loader, epoch, config)
@@ -509,7 +510,8 @@ def training_loop(config: AttrDict):
             # show recall and mAPs in terminal
             print(f"Epoch {epoch}")
             print_metrics(test_mAPs, test_recall)
-            print_multi_recall(test_multi_recall)
+            if "charades" in config.TrainDataset or "activity" in config.TrainDataset:
+                print_multi_recall(test_multi_recall)
 
             # save last checkpoint
             state = {
@@ -526,7 +528,7 @@ def training_loop(config: AttrDict):
                 torch.save(state, path)
 
             # save best checkpoint
-            if "charades" or "activity" in config.TrainDataset:
+            if "charades" in config.TrainDataset or "activity" in config.TrainDataset:
                 if test_recall[config.best_metric] > best_recall[config.best_metric]:
                     best_recall = test_recall
                     best_mAPs = test_mAPs

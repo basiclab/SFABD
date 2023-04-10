@@ -36,7 +36,7 @@
     "IntraContrastiveLoss": "src.losses.contrastive.IntraContrastiveLoss",
     "intra_t": 0.1,
     "intra_m": 0.0,
-    "intra_weight": 0.0,
+    "intra_weight": 0.1,
 
     "epochs": 7,
     "batch_size": 48,
@@ -48,5 +48,5 @@
     "grad_clip": 5.0,
 
     "best_metric": "R@1,IoU=0.7",
-    "logdir": "./logs/charades-resnet-iou-inter"
+    "logdir": "./logs/charades-I3D-resnet-iou-inter-intra"
 }

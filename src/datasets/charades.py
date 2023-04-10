@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from src.datasets.base import CollateBase
 
 
-class Charades(CollateBase):
+class CharadesVGG(CollateBase):
     def __init__(
         self,
         ann_file,           # path to annotation file (.json)
@@ -29,18 +29,26 @@ class Charades(CollateBase):
         return feats
 
 
-class CharadesSTATrain(Charades):
+class CharadesSTAVGGTrain(CharadesVGG):
     def __init__(self):
         super().__init__(
             ann_file="./data/CharadesSTA/train.json",
-            feat_file="./data/CharadesSTA/vgg_rgb_features.hdf5")
+            feat_file="./data/CharadesSTA/VGG/vgg_rgb_features.hdf5")
 
 
-class CharadesSTATest(Charades):
+class CharadesSTAVGGTest(CharadesVGG):
     def __init__(self):
         super().__init__(
             ann_file="./data/CharadesSTA/test.json",
-            feat_file="./data/CharadesSTA/vgg_rgb_features.hdf5")
+            feat_file="./data/CharadesSTA/VGG/vgg_rgb_features.hdf5")
+
+
+
+class CharadesSTAVGGMultiTest(CharadesVGG):
+    def __init__(self):
+        super().__init__(
+            ann_file="./data/CharadesSTA/multi_test.json",
+            feat_file="./data/CharadesSTA/VGG/vgg_rgb_features.hdf5")
 
 
 class CharadesI3D(CollateBase):
@@ -69,19 +77,19 @@ class CharadesI3D(CollateBase):
 class CharadesSTAI3DTrain(CharadesI3D):
     def __init__(self):
         super().__init__(
-            ann_file="./data/CharadesSTA/charades_train.json",
+            ann_file="./data/CharadesSTA/train.json",
             feat_dir="./data/CharadesSTA/I3D/features/")
 
 
 class CharadesSTAI3DTest(CharadesI3D):
     def __init__(self):
         super().__init__(
-            ann_file="./data/CharadesSTA/charades_test.json",
+            ann_file="./data/CharadesSTA/test.json",
             feat_dir="./data/CharadesSTA/I3D/features/")
 
 
 class CharadesSTAI3DMultiTest(CharadesI3D):
     def __init__(self):
         super().__init__(
-            ann_file="./data/CharadesSTA/charades_multi_test.json",
+            ann_file="./data/CharadesSTA/multi_test.json",
             feat_dir="./data/CharadesSTA/I3D/features/")

@@ -58,7 +58,7 @@ class Conv1dPool(nn.Module):
             C: (C)hannel = JOINT_SPACE_SIZE
             D: (D)imension of prorposal matrix = NUM_CLIPS
         """
-        x = self.model(x)       # [B, C, D]
+        x = self.model(x)       # [B, C = 512, D]
         return x
 
 

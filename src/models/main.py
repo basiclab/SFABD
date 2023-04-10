@@ -144,7 +144,6 @@ class MMN(nn.Module):
 
         video_feats = self.aggregate(video_feats, video_masks)      # [B, ?, C]
         video_feats = video_feats.permute(0, 2, 1)                  # [B, C, ?]
-
         video_feats1, video_feats2, mask2d = self.video_model(video_feats)
         sents_feats1, sents_feats2 = self.sents_model(sents_tokens, sents_masks)
 

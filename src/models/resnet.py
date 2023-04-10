@@ -1,4 +1,4 @@
-from typing import Optional, Callable, Type, List, Tuple
+from typing import Optional, Callable, Type, List, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -93,6 +93,55 @@ class BasicBlock(nn.Module):
         return out, out_mask
 
 
+class BottleneckBlock(nn.Module):
+    expansion: int = 2
+
+    def __init__(
+        self,
+        inplanes: int,
+        planes: int,
+        stride: int = 1,
+        downsample: Optional[nn.Module] = None,
+        norm_layer: Optional[Callable[..., nn.Module]] = None,
+    ) -> None:
+        super().__init__()
+        if norm_layer is None:
+            norm_layer = nn.BatchNorm2d
+        # Both self.conv1 and self.downsample layers downsample the input when stride != 1
+        self.conv1 = conv1x1(inplanes, planes, stride)
+        self.bn1 = norm_layer(planes)
+        self.conv2 = conv3x3(planes, planes)
+        self.bn2 = norm_layer(planes)
+        self.conv3 = conv1x1(planes, planes * self.expansion)
+        self.bn3 = norm_layer(planes * self.expansion)
+
+        self.downsample = downsample
+        self.stride = stride
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x: Tensor, mask: Tensor) -> Tuple[Tensor, Tensor]:
+        identity = x
+
+        out, out_mask = self.conv1(x, mask)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out, out_mask = self.conv2(out, out_mask)
+        out = self.bn2(out)
+        out = self.relu(out)
+
+        out, out_mask = self.conv3(out, out_mask)
+        out = self.bn3(out)
+        if self.downsample is not None:
+            identity, identity_mask = self.downsample(x, mask)
+            out_mask |= identity_mask
+
+        out += identity
+        out = self.relu(out)
+
+        return out, out_mask
+
+
 class Downsample(nn.Module):
     def __init__(
         self,
@@ -102,8 +151,8 @@ class Downsample(nn.Module):
         norm_layer: Optional[Callable[..., nn.Module]] = None,
     ):
         super().__init__()
-        self.conv = conv1x1(in_channel, out_channel, stride),
-        self.bn = norm_layer(out_channel),
+        self.conv = conv1x1(in_channel, out_channel, stride)
+        self.bn = norm_layer(out_channel)
 
     def forward(self, x: Tensor, mask: Tensor) -> Tuple[Tensor, Tensor]:
         x, mask = self.conv(x, mask)
@@ -124,7 +173,7 @@ class MaskedResNet(nn.Module):
         in_channel: int,            # input feature size (512)
         hidden_channel: int,        # hidden feature size (512)
         out_channel: int,           # output feature size (256)
-        block: Type[BasicBlock],
+        block: Union[Type[BasicBlock], Type[BottleneckBlock]],
         layers: List[int],
     ) -> None:
         super().__init__()
@@ -142,10 +191,10 @@ class MaskedResNet(nn.Module):
 
     def _make_layer(
         self,
-        block: Type[BasicBlock],
+        block: Union[Type[BasicBlock], Type[BottleneckBlock]],
         planes: int,
         blocks: int,
-        stride: int = 1,
+        stride: int = 1,  # always 1 here, do not downsample 2D map
     ) -> MaskedSequential:
         norm_layer = self.norm_layer
         downsample = None
@@ -154,10 +203,12 @@ class MaskedResNet(nn.Module):
                 self.inplanes, planes * block.expansion, stride, norm_layer)
 
         layers = []
+        # first layer of each stage
         layers.append(
             block(self.inplanes, planes, stride, downsample, norm_layer)
         )
         self.inplanes = planes * block.expansion
+        # the remaining layers
         for _ in range(1, blocks):
             layers.append(
                 block(
@@ -173,12 +224,12 @@ class MaskedResNet(nn.Module):
         x, mask = self.conv1(x, mask)
         x = self.bn1(x)
         x = self.relu(x)
-
+        # x: [bs, hidden, N, N]
+        # we don't need downsampling because we want to keep the N x N 2D map
         x, mask = self.layer1(x, mask)
         x, mask = self.layer2(x, mask)
         x, mask = self.layer3(x, mask)
         x, mask = self.layer4(x, mask)
-
         return x, mask
 
 
@@ -197,16 +248,19 @@ class ProposalConv(MaskedResNet):
             hidden_channel,
             out_channel,
             BasicBlock,
-            [2, 2, 2, 2]   # resnet-18
-            # [3, 4, 6, 3]    # resnet-34
+            # BottleneckBlock,
+            # [2, 2, 2, 2]   # resnet-18
+            [3, 4, 6, 3]    # resnet-34, or resnet-50 with bottleneck
         )
         self.dual_space = dual_space
+        # self.block = BottleneckBlock
+        self.block = BasicBlock
 
         if dual_space:
-            self.proj1 = conv1x1(hidden_channel, out_channel, 1)  # 512 -> 256
-            self.proj2 = conv1x1(hidden_channel, out_channel, 1)
+            self.proj1 = conv1x1(hidden_channel * self.block.expansion, out_channel, 1)  # 512 -> 256
+            self.proj2 = conv1x1(hidden_channel * self.block.expansion, out_channel, 1)
         else:
-            self.proj = conv1x1(hidden_channel, out_channel, 1)
+            self.proj = conv1x1(hidden_channel * self.block.expansion, out_channel, 1)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):

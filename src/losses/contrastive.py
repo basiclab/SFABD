@@ -109,6 +109,14 @@ class InterContrastiveLoss(LogCrossEntropy):
             topk_video_feats,                                   # [M, K, C]
             sents_feats.t(),                                    # [C, S]
         )                                                       # [M, K, S]
+        # TODO find easy neg mask
+        # neg_margin = 0.3
+        # zero_tensor = torch.zeros_like(inter_video_all)  # [M, K, S]
+        # easy_neg_mask = torch.maximum(zero_tensor,
+        #                               inter_video_all + neg_margin)
+        # easy_neg_mask[easy_neg_mask > 0] = 1             # keep where mask = 1
+        # easy_neg_mask = easy_neg_mask[:, 0, :].bool()    # [M, 1, S]
+
         mask = ~torch.eye(S, device=device).bool()              # [S, S]
         inter_video_neg_mask = mask[scatter_m2s].unsqueeze(1)   # [M, 1, S]
 
@@ -116,6 +124,7 @@ class InterContrastiveLoss(LogCrossEntropy):
             inter_video_pos,                                    # [M, K]
             inter_video_all,                                    # [M, K, S]
             inter_video_neg_mask,                               # [M, 1, S]
+            # inter_video_neg_mask * easy_neg_mask,               # [M, 1, S]
             self.t,
             self.m,
         )
@@ -127,6 +136,12 @@ class InterContrastiveLoss(LogCrossEntropy):
             sents_feats,                                        # [S, C]
             video_feats.view(-1, C).t(),                        # [C, B * P]
         ).unsqueeze(1)                                          # [S, 1, B * P]
+        # # TODO find easy neg mask
+        # zero_tensor = torch.zeros_like(inter_query_all)  # [S, 1, B * P]
+        # easy_neg_mask = torch.maximum(zero_tensor,
+        #                               inter_query_all + neg_margin)
+        # easy_neg_mask[easy_neg_mask > 0] = 1             # keep where mask = 1
+        # easy_neg_mask = easy_neg_mask.bool()    # [S, 1, B * P]
 
         pos_mask = torch.eye(B, device=device).bool()           # [B, B]
         pos_mask = pos_mask.unsqueeze(-1)                       # [B, B, 1]
@@ -181,6 +196,7 @@ class InterContrastiveLoss(LogCrossEntropy):
             inter_query_pos,                                    # [M, K]
             inter_query_all[scatter_m2s],                       # [M, 1, B * P]
             inter_query_neg_mask[scatter_m2s],                  # [M, 1, B * P]
+            # inter_query_neg_mask[scatter_m2s] * easy_neg_mask[scatter_m2s],
             self.t,
             self.m,
         )
@@ -317,6 +333,14 @@ class IntraContrastiveLoss(LogCrossEntropy):
             pos_video_feats,                                    # [M * K, C]
             video_feats.view(-1, C).t(),                        # [C, B * P]
         )                                                       # [M * K, B * P]
+        # TODO find easy neg mask
+        # neg_margin = 0.3
+        # zero_tensor = torch.zeros_like(intra_video_all)         # [M * K, B * P]
+        # easy_neg_mask = torch.maximum(zero_tensor,
+        #                               intra_video_all + neg_margin)
+        # easy_neg_mask[easy_neg_mask > 0] = 1                    # keep where mask = 1
+        # easy_neg_mask = easy_neg_mask[ref_idx]                  # [E, B * P]
+        # easy_neg_mask = easy_neg_mask.bool()                    # [E, B * P]
 
         # negative mask
         pos_mask = torch.eye(B, device=device).bool()           # [B, B]
@@ -373,6 +397,7 @@ class IntraContrastiveLoss(LogCrossEntropy):
             intra_video_pos,                                    # [E]
             intra_video_all[ref_idx],                           # [E, B * P]
             intra_video_neg_mask[scatter_e2s],                  # [E, B * P]
+            # intra_video_neg_mask[scatter_e2s] * easy_neg_mask,  # [E, B * P]
             self.t,
             self.m
         )
