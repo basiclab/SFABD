@@ -177,6 +177,7 @@ class LanguageModel(nn.Module):
         sents_tokens: torch.Tensor,                                         # [S, L]
         sents_masks: torch.Tensor,                                          # [S, L]
     ):
+        # global average over all tokens including ['CLS']
         feats = self.bert(sents_tokens, attention_mask=sents_masks)[0]      # [S, L, C]
         feats = (feats * sents_masks.unsqueeze(-1)).sum(dim=1)              # [S, C]
         feats = feats / sents_masks.sum(dim=1, keepdim=True)                # [S, C]

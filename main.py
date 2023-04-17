@@ -56,6 +56,14 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--intra_t', default=0.1, help='temperature for intra contrastive loss')
 @click.option('--intra_m', default=0.0, help='margin for inter contrastive loss')
 @click.option('--intra_weight', default=0.1)
+# Dynamic Negative Sampling
+@click.option('--inter_query_threshold', default=0.7, help='threshold for finding false negative')
+@click.option('--intra_video_threshold', default=0.9, help='threshold for finding false negative')
+@click.option('--fusion_ratio', default=0.5, help='linear combination ratio of inter_query_sim and intra_video_sim')
+@click.option('--exponent', default=1, help='exponent of the fused neg sim distribution')
+@click.option('--neg_samples_num', default=512)
+@click.option('--start_dns_epoch', default=1)
+@click.option('--rate_step_change', default=0.05)
 # multi positive contrastive loss
 @click.option('--MultiPositiveContrastiveLoss', 'MultiPositiveContrastiveLoss', default="src.losses.contrastive.MultiPositiveContrastiveLoss")
 # optimizer

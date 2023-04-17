@@ -10,8 +10,10 @@ from src.utils import iou
 def recall_name(rec_n: int, iou_v: float) -> str:
     return f'R@{rec_n:d},IoU={iou_v:.1f}'
 
+
 def multi_recall_name(rec_n: int, iou_v: float) -> str:
     return f'R@({rec_n:d}/5),IoU={iou_v:.1f}'
+
 
 def mAP_name(iou_threshold: float) -> str:
     return f'mAP@{iou_threshold:.2f}'
@@ -138,7 +140,7 @@ def calculate_multi_recall(
                 max_ious = ious[shift_t:shift_t + num_t, :recall_n].max(dim=1).values
                 rec = float((max_ious >= recall_iou).long().sum().item() / num_t)
                 recall_list.append(rec)
-                shift_t += num_t    
+                shift_t += num_t
             recall[multi_recall_name(recall_n, recall_iou)] = sum(recall_list) / len(recall_list)
 
     return recall

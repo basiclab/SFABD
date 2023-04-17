@@ -16,3 +16,4 @@ logs
 
 *.sh
 generate_sh.py
+generate_DNS_sh.py

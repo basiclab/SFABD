@@ -43,7 +43,6 @@ class CharadesSTAVGGTest(CharadesVGG):
             feat_file="./data/CharadesSTA/VGG/vgg_rgb_features.hdf5")
 
 
-
 class CharadesSTAVGGMultiTest(CharadesVGG):
     def __init__(self):
         super().__init__(

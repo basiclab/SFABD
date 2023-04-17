@@ -123,7 +123,10 @@ def train_epoch(
             mask2d=mask2d,
         )
         #  return neg mask
-        # loss_inter, loss_inter_metrics, neg_mask = loss_inter_fn(
+        # (loss_inter,
+        #  loss_inter_metrics,
+        #  bce_sampled_neg_mask,
+        #  intra_sampled_neg_mask) = loss_inter_fn(
         #     video_feats=video_feats,
         #     sents_feats=sents_feats,
         #     num_sentences=batch['num_sentences'],
@@ -131,6 +134,7 @@ def train_epoch(
         #     iou2d=iou2d,
         #     iou2ds=iou2ds,
         #     mask2d=mask2d,
+        #     epoch=epoch,
         # )
         loss_intra, loss_intra_metrics = loss_intra_fn(
             video_feats=video_feats,
@@ -140,13 +144,14 @@ def train_epoch(
             iou2d=iou2d,
             iou2ds=iou2ds,
             mask2d=mask2d,
+            # sampled_neg_mask=intra_sampled_neg_mask,
         )
         # also do false negative removal
         loss_iou, loss_iou_metrics = loss_iou_fn(
             logits2d=logits2d,
             iou2d=iou2d,
             mask2d=mask2d,
-            # neg_mask=neg_mask,
+            # sampled_neg_mask=bce_sampled_neg_mask,
         )
 
         if epoch < config.contrastive_decay_start:
@@ -346,6 +351,39 @@ def training_loop(config: AttrDict):
         top_neg_removal_percent=config.top_neg_removal_percent,
         weight=config.intra_weight,
     )
+    # loss_iou_fn = construct_class(
+    #     config.IoULoss + 'DNS',
+    #     min_iou=config.min_iou,
+    #     max_iou=config.max_iou,
+    #     alpha=config.alpha,
+    #     gamma=config.gamma,
+    #     weight=config.iou_weight,
+    # )
+    # loss_inter_fn = construct_class(
+    #     config.InterContrastiveLoss + 'DNS',
+    #     t=config.inter_t,
+    #     m=config.inter_m,
+    #     neg_iou=config.neg_iou,
+    #     pos_topk=config.pos_topk,
+    #     top_neg_removal_percent=config.top_neg_removal_percent,
+    #     weight=config.inter_weight,
+    #     inter_query_threshold=config.inter_query_threshold,
+    #     intra_video_threshold=config.intra_video_threshold,
+    #     fusion_ratio=config.fusion_ratio,
+    #     exponent=config.exponent,
+    #     neg_samples_num=config.neg_samples_num,
+    #     start_DNS_epoch=config.start_dns_epoch,
+    #     rate_step_change=config.rate_step_change,
+    # )
+    # loss_intra_fn = construct_class(
+    #     config.IntraContrastiveLoss + 'DNS',
+    #     t=config.intra_t,
+    #     m=config.intra_m,
+    #     neg_iou=config.neg_iou,
+    #     pos_topk=config.pos_topk,
+    #     top_neg_removal_percent=config.top_neg_removal_percent,
+    #     weight=config.intra_weight,
+    # )
 
     # testing MultiPositiveContrastive
     # loss_mpcon_fn = construct_class(
