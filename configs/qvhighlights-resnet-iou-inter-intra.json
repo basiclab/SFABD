@@ -20,12 +20,10 @@
     "alpha": 0.25,
     "gamma": 2.0,
     "iou_weight": 1.0,
-
     "iou_threshold": 0.75,
-    "bbox_reg_weight": 1.0,
-
     "neg_iou": 0.5,
     "pos_topk": 1,
+
     "top_neg_removal_percent": 0.01,
     "contrastive_decay": 0.1,
     "contrastive_decay_start": 999,
@@ -39,6 +37,7 @@
     "intra_t": 0.1,
     "intra_m": 0.0,
     "intra_weight": 0.1,
+    "mixup_alpha": 0.9,
 
     "MultiPositiveContrastiveLoss": "src.losses.contrastive.MultiPositiveContrastiveLoss",
 

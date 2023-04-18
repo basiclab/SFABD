@@ -391,7 +391,7 @@ class IntraContrastiveLoss(LogCrossEntropy):
         )
 
 
-'''
+
 # Dynamic negative sampling version
 class InterContrastiveLossDNS(InterContrastiveLoss):
     def __init__(
@@ -654,6 +654,7 @@ class IntraContrastiveLossDNS(IntraContrastiveLoss):
         pos_topk: int = 1,              # positive topk
         top_neg_removal_percent: float = 0.01,
         weight: float = 1.0,            # weight
+        mixup_alpha: float = 0.9,
     ):
         super().__init__(
             t,
@@ -663,6 +664,7 @@ class IntraContrastiveLossDNS(IntraContrastiveLoss):
             top_neg_removal_percent,
             weight,
         )
+        self.mixup_alpha = mixup_alpha
 
     def forward(
         self,
@@ -728,6 +730,12 @@ class IntraContrastiveLossDNS(IntraContrastiveLoss):
         #     # only for multi-target samples
         #     pairs = torch.ones(
         #         num * K * 2, num * K * 2, device=device).nonzero()  # [num * K * 2 * num * K * 2, 2]
+        #     # mask trivial pairs to save memory cost
+        #     # pairs = torch.ones(
+        #     #     num * K * 2, num * K * 2, device=device)
+        #     # diagonal_mask = torch.eye(num * K * 2, device=device)
+        #     # pairs = pairs * ~diagonal_mask
+
         #     combinations.append(pairs + shift)
         #     scatter_e2s.append(torch.ones(len(pairs), device=device) * i)
         #     shift += num * K * 2
@@ -774,10 +782,9 @@ class IntraContrastiveLossDNS(IntraContrastiveLoss):
         # Do feature space augmentation with query
         # a * v_feat + (1 - a) * q_feat
         # TODO, sample alpha from a distribution
-        # alpha = 0.7
         # temp_sent_feats = sents_feats[scatter_m2s]              # [M, C]
         # temp_sent_feats = torch.repeat_interleave(temp_sent_feats, K, dim=0)    # [M * K, C]
-        # aug_video_feats = alpha * pos_video_feats + (1 - alpha) * temp_sent_feats
+        # aug_video_feats = self.mixup_alpha * pos_video_feats + (1 - self.mixup_alpha) * temp_sent_feats
         # aug_video_feats = F.normalize(aug_video_feats.contiguous(), dim=-1)  # [M * K, C]
         # # concate this with original pos_v_feats [M * K, 2, C]
         # new_video_feats = torch.stack([pos_video_feats, aug_video_feats], dim=1)  # [M * K, 2, C]
@@ -841,7 +848,7 @@ class IntraContrastiveLossDNS(IntraContrastiveLoss):
                 'loss/intra_video': loss_intra_video,
             }
         )
-'''
+
 
 
 class LogCrossEntropyMP(nn.Module):
