@@ -28,7 +28,7 @@
     "pos_topk": 1,
     "top_neg_removal_percent": 0.01,
     "contrastive_decay": 0.1,
-    "contrastive_decay_start": 5,
+    "contrastive_decay_start": 999,
 
     "InterContrastiveLoss": "src.losses.contrastive.InterContrastiveLoss",
     "inter_t": 0.1,
@@ -40,7 +40,7 @@
     "intra_m": 0.0,
     "intra_weight": 0.0,
 
-    "epochs": 10,
+    "epochs": 7,
     "batch_size": 24,
     "base_lr": 1e-3,
     "bert_lr": 1e-5,

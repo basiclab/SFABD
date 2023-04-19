@@ -13,7 +13,8 @@ data
 
 logs
 *.jpg
-
+*.csv
 *.sh
 generate_sh.py
 generate_DNS_sh.py
+evaluate_result.py

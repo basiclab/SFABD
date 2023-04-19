@@ -21,10 +21,7 @@
     "alpha": 0.25,
     "gamma": 2.0,
     "iou_weight": 1.0,
-
     "iou_threshold": 0.75,
-    "bbox_reg_weight": 1.0,
-
     "neg_iou": 0.5,
     "pos_topk": 1,
     "contrastive_decay": 0.01,

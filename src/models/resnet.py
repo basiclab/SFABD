@@ -247,14 +247,14 @@ class ProposalConv(MaskedResNet):
             in_channel,
             hidden_channel,
             out_channel,
-            BasicBlock,
-            # BottleneckBlock,
-            [2, 2, 2, 2]   # resnet-18
-            # [3, 4, 6, 3]    # resnet-34, or resnet-50 with bottleneck
+            # BasicBlock,
+            BottleneckBlock,
+            # [2, 2, 2, 2]   # resnet-18
+            [3, 4, 6, 3]    # resnet-34, or resnet-50 with bottleneck
         )
         self.dual_space = dual_space
-        # self.block = BottleneckBlock
-        self.block = BasicBlock
+        self.block = BottleneckBlock
+        # self.block = BasicBlock
 
         if dual_space:
             self.proj1 = conv1x1(hidden_channel * self.block.expansion, out_channel, 1)  # 512 -> 256

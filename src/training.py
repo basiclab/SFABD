@@ -111,22 +111,9 @@ def train_epoch(
         batch = {key: value.to(device) for key, value in batch.items()}
         iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips)
         iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])
-
         video_feats, sents_feats, logits2d, scores2ds, mask2d = model(**batch)
-        loss_inter, loss_inter_metrics = loss_inter_fn(
-            video_feats=video_feats,
-            sents_feats=sents_feats,
-            num_sentences=batch['num_sentences'],
-            num_targets=batch['num_targets'],
-            iou2d=iou2d,
-            iou2ds=iou2ds,
-            mask2d=mask2d,
-        )
-        #  return neg mask
-        # (loss_inter,
-        #  loss_inter_metrics,
-        #  bce_sampled_neg_mask,
-        #  intra_sampled_neg_mask) = loss_inter_fn(
+
+        # loss_inter, loss_inter_metrics = loss_inter_fn(
         #     video_feats=video_feats,
         #     sents_feats=sents_feats,
         #     num_sentences=batch['num_sentences'],
@@ -134,8 +121,21 @@ def train_epoch(
         #     iou2d=iou2d,
         #     iou2ds=iou2ds,
         #     mask2d=mask2d,
-        #     epoch=epoch,
         # )
+        #  return neg mask
+        (loss_inter,
+         loss_inter_metrics,
+         bce_sampled_neg_mask,
+         intra_sampled_neg_mask) = loss_inter_fn(
+            video_feats=video_feats,
+            sents_feats=sents_feats,
+            num_sentences=batch['num_sentences'],
+            num_targets=batch['num_targets'],
+            iou2d=iou2d,
+            iou2ds=iou2ds,
+            mask2d=mask2d,
+            epoch=epoch,
+        )
         loss_intra, loss_intra_metrics = loss_intra_fn(
             video_feats=video_feats,
             sents_feats=sents_feats,
@@ -325,34 +325,8 @@ def training_loop(config: AttrDict):
         )
 
     # loss functions
-    loss_iou_fn = construct_class(
-        config.IoULoss,
-        min_iou=config.min_iou,
-        max_iou=config.max_iou,
-        alpha=config.alpha,
-        gamma=config.gamma,
-        weight=config.iou_weight,
-    )
-    loss_inter_fn = construct_class(
-        config.InterContrastiveLoss,
-        t=config.inter_t,
-        m=config.inter_m,
-        neg_iou=config.neg_iou,
-        pos_topk=config.pos_topk,
-        top_neg_removal_percent=config.top_neg_removal_percent,
-        weight=config.inter_weight,
-    )
-    loss_intra_fn = construct_class(
-        config.IntraContrastiveLoss,
-        t=config.intra_t,
-        m=config.intra_m,
-        neg_iou=config.neg_iou,
-        pos_topk=config.pos_topk,
-        top_neg_removal_percent=config.top_neg_removal_percent,
-        weight=config.intra_weight,
-    )
     # loss_iou_fn = construct_class(
-    #     config.IoULoss + 'DNS',
+    #     config.IoULoss,
     #     min_iou=config.min_iou,
     #     max_iou=config.max_iou,
     #     alpha=config.alpha,
@@ -360,31 +334,57 @@ def training_loop(config: AttrDict):
     #     weight=config.iou_weight,
     # )
     # loss_inter_fn = construct_class(
-    #     config.InterContrastiveLoss + 'DNS',
+    #     config.InterContrastiveLoss,
     #     t=config.inter_t,
     #     m=config.inter_m,
     #     neg_iou=config.neg_iou,
     #     pos_topk=config.pos_topk,
     #     top_neg_removal_percent=config.top_neg_removal_percent,
     #     weight=config.inter_weight,
-    #     inter_query_threshold=config.inter_query_threshold,
-    #     intra_video_threshold=config.intra_video_threshold,
-    #     fusion_ratio=config.fusion_ratio,
-    #     exponent=config.exponent,
-    #     neg_samples_num=config.neg_samples_num,
-    #     start_DNS_epoch=config.start_dns_epoch,
-    #     rate_step_change=config.rate_step_change,
     # )
     # loss_intra_fn = construct_class(
-    #     config.IntraContrastiveLoss + 'DNS',
+    #     config.IntraContrastiveLoss,
     #     t=config.intra_t,
     #     m=config.intra_m,
     #     neg_iou=config.neg_iou,
     #     pos_topk=config.pos_topk,
     #     top_neg_removal_percent=config.top_neg_removal_percent,
     #     weight=config.intra_weight,
-    #     mixup_alpha=config.mixup_alpha
     # )
+    loss_iou_fn = construct_class(
+        config.IoULoss + 'DNS',
+        min_iou=config.min_iou,
+        max_iou=config.max_iou,
+        alpha=config.alpha,
+        gamma=config.gamma,
+        weight=config.iou_weight,
+    )
+    loss_inter_fn = construct_class(
+        config.InterContrastiveLoss + 'DNS',
+        t=config.inter_t,
+        m=config.inter_m,
+        neg_iou=config.neg_iou,
+        pos_topk=config.pos_topk,
+        top_neg_removal_percent=config.top_neg_removal_percent,
+        weight=config.inter_weight,
+        inter_query_threshold=config.inter_query_threshold,
+        intra_video_threshold=config.intra_video_threshold,
+        fusion_ratio=config.fusion_ratio,
+        exponent=config.exponent,
+        neg_samples_num=config.neg_samples_num,
+        start_DNS_epoch=config.start_dns_epoch,
+        rate_step_change=config.rate_step_change,
+    )
+    loss_intra_fn = construct_class(
+        config.IntraContrastiveLoss + 'DNS',
+        t=config.intra_t,
+        m=config.intra_m,
+        neg_iou=config.neg_iou,
+        pos_topk=config.pos_topk,
+        top_neg_removal_percent=config.top_neg_removal_percent,
+        weight=config.intra_weight,
+        mixup_alpha=config.mixup_alpha
+    )
 
     # testing MultiPositiveContrastive
     # loss_mpcon_fn = construct_class(
@@ -582,7 +582,7 @@ def training_loop(config: AttrDict):
                     best_mAPs = test_mAPs
                     path = os.path.join(config.logdir, f"best.pth")
                     torch.save(state, path)
-                best_multi_recall = None    # for QVHighlights                
+                best_multi_recall = None    # for QVHighlights
 
             # log best results
             for name, value in best_recall.items():

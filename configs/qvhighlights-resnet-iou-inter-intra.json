@@ -41,7 +41,7 @@
 
     "MultiPositiveContrastiveLoss": "src.losses.contrastive.MultiPositiveContrastiveLoss",
 
-    "epochs": 10,
+    "epochs": 7,
     "batch_size": 24,
     "base_lr": 1e-3,
     "bert_lr": 1e-5,
