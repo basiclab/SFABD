@@ -25,7 +25,7 @@
     "neg_iou": 0.5,
     "pos_topk": 1,
     "contrastive_decay": 0.01,
-    "contrastive_decay_start": 7,
+    "contrastive_decay_start": 8,
 
     "InterContrastiveLoss": "src.losses.contrastive.InterContrastiveLoss",
     "inter_t": 0.1,
@@ -37,7 +37,9 @@
     "intra_m": 0.0,
     "intra_weight": 0.1,
 
-    "epochs": 12,
+    "start_dns_epoch": 999,
+
+    "epochs": 10,
     "batch_size": 24,
     "base_lr": 1e-3,
     "bert_lr": 1e-5,

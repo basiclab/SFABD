@@ -37,7 +37,9 @@
     "intra_m": 0.0,
     "intra_weight": 0.1,
 
-    "epochs": 12,
+    "start_dns_epoch": 999,
+
+    "epochs": 10,
     "batch_size": 24,
     "base_lr": 8e-4,
     "bert_lr": 8e-5,

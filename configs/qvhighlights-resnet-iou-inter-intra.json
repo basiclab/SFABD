@@ -38,10 +38,11 @@
     "intra_m": 0.0,
     "intra_weight": 0.1,
     "mixup_alpha": 0.9,
+    "start_dns_epoch": 999,
 
     "MultiPositiveContrastiveLoss": "src.losses.contrastive.MultiPositiveContrastiveLoss",
 
-    "epochs": 7,
+    "epochs": 6,
     "batch_size": 24,
     "base_lr": 1e-3,
     "bert_lr": 1e-5,

@@ -78,6 +78,8 @@ class CollateBase(torch.utils.data.Dataset):
         anno = self.annos[idx]
         video_feats = self.get_feat(anno)
 
+        # Do video feature-level augmentation here
+
         return {
             'idx': torch.ones(anno['num_sentences'], dtype=torch.long) * idx,
             'video_feats': video_feats,

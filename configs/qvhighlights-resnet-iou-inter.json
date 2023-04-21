@@ -40,13 +40,13 @@
     "intra_m": 0.0,
     "intra_weight": 0.0,
 
-    "epochs": 7,
+    "epochs": 6,
     "batch_size": 24,
     "base_lr": 1e-3,
     "bert_lr": 1e-5,
     "milestones": [999],
     "step_gamma": 0.1,
-    "bert_fire_start": 6,
+    "bert_fire_start": 1,
     "grad_clip": 5.0,
 
     "best_metric": "all/mAP@avg",

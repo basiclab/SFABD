@@ -722,51 +722,51 @@ class IntraContrastiveLossDNS(IntraContrastiveLoss):
         sents_feats = F.normalize(sents_feats.contiguous(), dim=-1)     # [S, C]
 
         # Enumerate positive pairs (original)
-        # shift = 0
-        # combinations = []
-        # scatter_e2s = []
-        # for i, num in enumerate(num_targets):
-        #     # only for multi-target samples
-        #     if num > 0:
-        #         pairs = torch.ones(
-        #             num * K, num * K, device=device).nonzero()  # [num * K * num * K, 2]
-        #         combinations.append(pairs + shift)
-        #         scatter_e2s.append(torch.ones(len(pairs), device=device) * i)
-        #     shift += num * K
-
-        # # E: number of (E)numerated positive pairs
-        # ref_idx, pos_idx = torch.cat(combinations, dim=0).t()   # [E], [E]
-        # # S -> E
-        # scatter_e2s = torch.cat(scatter_e2s, dim=0).long()      # [E]  ex.[0, 0, 0, 1, 1, 1...]
-
-        # assert (ref_idx < M * K).all()
-        # assert (pos_idx < M * K).all()
-
-        # Re-write this part (assume that each sample only have 1 augmented feat)
         shift = 0
         combinations = []
         scatter_e2s = []
         for i, num in enumerate(num_targets):
             # only for multi-target samples
-            pairs = torch.ones(
-                num * K * 2, num * K * 2, device=device).nonzero()  # [num * K * 2 * num * K * 2, 2]
-            # mask trivial pairs to save memory cost
-            # pairs = torch.ones(
-            #     num * K * 2, num * K * 2, device=device)
-            # diagonal_mask = torch.eye(num * K * 2, device=device).bool()
-            # pairs[diagonal_mask] = 0
-            # pairs = pairs.nonzero()                             # [num * K * 2 * num * K * 2, 2]
-
-            combinations.append(pairs + shift)
-            scatter_e2s.append(torch.ones(len(pairs), device=device) * i)
-            shift += num * K * 2
+            if num > 0:
+                pairs = torch.ones(
+                    num * K, num * K, device=device).nonzero()  # [num * K * num * K, 2]
+                combinations.append(pairs + shift)
+                scatter_e2s.append(torch.ones(len(pairs), device=device) * i)
+            shift += num * K
 
         # E: number of (E)numerated positive pairs
         ref_idx, pos_idx = torch.cat(combinations, dim=0).t()   # [E], [E]
         # S -> E
         scatter_e2s = torch.cat(scatter_e2s, dim=0).long()      # [E]  ex.[0, 0, 0, 1, 1, 1...]
-        assert (ref_idx < M * K * 2).all()
-        assert (pos_idx < M * K * 2).all()
+
+        assert (ref_idx < M * K).all()
+        assert (pos_idx < M * K).all()
+
+        # Re-write this part (assume that each sample only have 1 augmented feat)
+        # shift = 0
+        # combinations = []
+        # scatter_e2s = []
+        # for i, num in enumerate(num_targets):
+        #     # only for multi-target samples
+        #     pairs = torch.ones(
+        #         num * K * 2, num * K * 2, device=device).nonzero()  # [num * K * 2 * num * K * 2, 2]
+        #     # mask trivial pairs to save memory cost
+        #     # pairs = torch.ones(
+        #     #     num * K * 2, num * K * 2, device=device)
+        #     # diagonal_mask = torch.eye(num * K * 2, device=device).bool()
+        #     # pairs[diagonal_mask] = 0
+        #     # pairs = pairs.nonzero()                             # [num * K * 2 * num * K * 2, 2]
+
+        #     combinations.append(pairs + shift)
+        #     scatter_e2s.append(torch.ones(len(pairs), device=device) * i)
+        #     shift += num * K * 2
+
+        # # E: number of (E)numerated positive pairs
+        # ref_idx, pos_idx = torch.cat(combinations, dim=0).t()   # [E], [E]
+        # # S -> E
+        # scatter_e2s = torch.cat(scatter_e2s, dim=0).long()      # [E]  ex.[0, 0, 0, 1, 1, 1...]
+        # assert (ref_idx < M * K * 2).all()
+        # assert (pos_idx < M * K * 2).all()
 
         # top-K positive proposals
         topk_idxs = iou2ds.topk(K, dim=1)[1]                    # [M, K]
@@ -781,40 +781,40 @@ class IntraContrastiveLossDNS(IntraContrastiveLoss):
         # Do feature space augmentation with query
         # a * v_feat + (1 - a) * q_feat
         # TODO, sample alpha from a distribution
-        temp_sent_feats = sents_feats[scatter_m2s]              # [M, C]
-        temp_sent_feats = torch.repeat_interleave(temp_sent_feats, K, dim=0)    # [M * K, C]
-        # random generate M * K alphas
-        mixup_alpha = torch.rand((M * K, 1), device=device)     # [M * K, 1]
-        aug_video_feats = mixup_alpha * pos_video_feats + (1 - mixup_alpha) * temp_sent_feats
-        # fixed mixup alpha
-        # aug_video_feats = self.mixup_alpha * pos_video_feats + (1 - self.mixup_alpha) * temp_sent_feats
-        aug_video_feats = F.normalize(aug_video_feats.contiguous(), dim=-1)  # [M * K, C]
-        # concate this with original pos_v_feats [M * K, 2, C]
-        new_video_feats = torch.stack([pos_video_feats, aug_video_feats], dim=1)  # [M * K, 2, C]
-        # then reshape to [M * K * 2, C]
-        new_video_feats = new_video_feats.reshape(M * K * 2, C)
-
-        intra_video_pos = torch.mul(
-            new_video_feats[ref_idx],                           # [E, C]
-            new_video_feats[pos_idx],                           # [E, C]
-        ).sum(dim=1)                                            # [E]
-
-        # all scores
-        intra_video_all = torch.mm(
-            new_video_feats,                                    # [M * K * 2, C]
-            video_feats.view(-1, C).t(),                        # [C, B * P]
-        )                                                       # [M * K * 2, B * P]
+        # temp_sent_feats = sents_feats[scatter_m2s]              # [M, C]
+        # temp_sent_feats = torch.repeat_interleave(temp_sent_feats, K, dim=0)    # [M * K, C]
+        # # random generate M * K alphas
+        # mixup_alpha = torch.rand((M * K, 1), device=device)     # [M * K, 1]
+        # aug_video_feats = mixup_alpha * pos_video_feats + (1 - mixup_alpha) * temp_sent_feats
+        # # fixed mixup alpha
+        # # aug_video_feats = self.mixup_alpha * pos_video_feats + (1 - self.mixup_alpha) * temp_sent_feats
+        # aug_video_feats = F.normalize(aug_video_feats.contiguous(), dim=-1)  # [M * K, C]
+        # # concate this with original pos_v_feats [M * K, 2, C]
+        # new_video_feats = torch.stack([pos_video_feats, aug_video_feats], dim=1)  # [M * K, 2, C]
+        # # then reshape to [M * K * 2, C]
+        # new_video_feats = new_video_feats.reshape(M * K * 2, C)
 
         # intra_video_pos = torch.mul(
-        #     pos_video_feats[ref_idx],                           # [E, C]
-        #     pos_video_feats[pos_idx],                           # [E, C]
+        #     new_video_feats[ref_idx],                           # [E, C]
+        #     new_video_feats[pos_idx],                           # [E, C]
         # ).sum(dim=1)                                            # [E]
 
         # # all scores
         # intra_video_all = torch.mm(
-        #     pos_video_feats,                                    # [M * K, C]
+        #     new_video_feats,                                    # [M * K * 2, C]
         #     video_feats.view(-1, C).t(),                        # [C, B * P]
-        # )                                                       # [M * K, B * P]
+        # )                                                       # [M * K * 2, B * P]
+
+        intra_video_pos = torch.mul(
+            pos_video_feats[ref_idx],                           # [E, C]
+            pos_video_feats[pos_idx],                           # [E, C]
+        ).sum(dim=1)                                            # [E]
+
+        # all scores
+        intra_video_all = torch.mm(
+            pos_video_feats,                                    # [M * K, C]
+            video_feats.view(-1, C).t(),                        # [C, B * P]
+        )                                                       # [M * K, B * P]
 
         # negative mask
         pos_mask = torch.eye(B, device=device).bool()           # [B, B]
