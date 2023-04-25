@@ -1,4 +1,5 @@
 import os
+import random
 
 import h5py
 import numpy as np
@@ -58,6 +59,68 @@ class CharadesI3D(CollateBase):
     ):
         super().__init__(ann_file)
         self.feat_dir = feat_dir
+
+    # def augmentation(self, anno, video_feats):
+    #     """Do multi positive augmentation"""
+    #     duration = anno['duration']
+    #     # target moments of whole query-moment pairs in same video
+    #     moments = anno['tgt_moments']
+    #     print(f"num_targets:{anno['num_targets']}")
+    #     print(f"num_targets:{len(anno['num_targets'])}")
+    #     print(f"num sentences: {anno['num_sentences']}")
+        
+    #     start_time = 0
+    #     empty_clips = []
+    #     # # sort moments by the starting time
+    #     # sorted_moments = sorted(moments, key=lambda x: x[0])
+    #     # # moments_sorted_idx = sorted(range(len(moments)))
+    #     # sorted_moments_idx = sorted(range(len(moments)), key=lambda k: moments[k])
+    #     # # find all empty clips in video
+    #     # for moment in sorted_moments:
+    #     #     if (moment[0] - start_time) > 0:
+    #     #         empty_clips.append([start_time, moment[0]])
+    #     #     start_time = moment[1]
+    #     # if (duration - start_time) > 0:
+    #     #     empty_clips.append([start_time, duration])
+    #     # empty_clips_len = [clip[1] - clip[0] for clip in empty_clips]
+
+    #     # # random choose one moment to do augmentation
+    #     # moment_idx = random.choice(range(len(sorted_moments)))
+    #     # moment = sorted_moments[moment_idx]
+    #     # moment_len = moment[1] - moment[0]
+    #     # # enlarge moment len to include some background on boundary
+    #     # moment_len = moment_len * 1.2
+    #     # possible_start_index = []
+    #     # for empty_clip, empty_clip_len in zip(empty_clips, empty_clips_len):
+    #     #     if moment_len < empty_clip_len:
+    #     #         for start_time in np.arange(empty_clip[0], empty_clip[1] - moment_len, 0.5):
+    #     #             possible_start_index.append(start_time)
+
+    #     # # sample from the all possible start index to do augmentation
+    #     # aug_start = random.choice(possible_start_index)
+    #     # aug_end = aug_start + moment_len
+
+    #     # # update anno
+    #     # original_moment_idx = sorted_moments_idx[moment_idx]
+    #     # anno['tgt_moments'] = torch.cat(anno['tgt_moments'], [aug_start, aug_end])
+    #     # anno['num_targets'] += 1
+
+    #     # # do mixup
+    #     # alpha = 0.9
+    #     # seq_len = video_feats.shape[0]
+    #     # target_seq_start_idx = int(seq_len * moment[0])
+    #     # target_seq_end_idx = int(seq_len * moment[1])
+    #     # target_feat = video_feats[target_seq_start_idx:target_seq_end_idx]
+
+    #     # aug_seq_start_idx = int(seq_len * aug_start)
+    #     # aug_seq_end_idx = int(seq_len * aug_end)
+    #     # assert (target_seq_end_idx - target_seq_start_idx) == \
+    #     #     (aug_seq_end_idx - aug_seq_start_idx)
+    #     # video_feats[aug_seq_start_idx: aug_seq_end_idx] = \
+    #     #     target_feat * alpha + \
+    #     #     video_feats[aug_seq_start_idx: aug_seq_end_idx] * (1 - alpha)
+
+    #     return anno, video_feats
 
     def get_feat_dim(self):
         return 1024

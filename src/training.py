@@ -44,7 +44,13 @@ def test_epoch(
 
     for batch, info in tqdm(loader, ncols=0, leave=False, desc="Inferencing"):
         batch = {key: value.to(device) for key, value in batch.items()}
-
+        # print(f"video_feats:{batch['video_feats'].shape}")      # [bs, max_seq_len, 1024]
+        # print(f"video_masks:{batch['video_masks'].shape}")      # [bs, max_seq_len]
+        # print(f"sents_tokens:{batch['sents_tokens'].shape}")    # [140, max_sent_len]
+        # print(f"sents_masks:{batch['sents_masks'].shape}")      # [140, max_sent_len]
+        # print(f"num_sentences:{batch['num_sentences'].shape}")  # [bs]
+        # print(f"num_targets:{batch['num_targets'].shape}")      # [140]
+        # print(f"tgt_moments:{batch['tgt_moments'].shape}")      # [140, 2]
         # prediciton
         with torch.no_grad():
             *_, scores2ds, mask2d = model(**batch)
@@ -101,7 +107,6 @@ def val_epoch(
 
     for batch, info in tqdm(loader, ncols=0, leave=False, desc="Inferencing"):
         batch = {key: value.to(device) for key, value in batch.items()}
-
         # prediciton
         with torch.no_grad():
             *_, scores2ds, mask2d = model(**batch)
@@ -365,6 +370,7 @@ def training_loop(config: AttrDict):
         conv2d_kernel_size=config.conv2d_kernel_size,
         conv2d_num_layers=config.conv2d_num_layers,
         joint_space_size=config.joint_space_size,
+        resnet=config.resnet,
         dual_space=config.dual_space,
     ).to(device)
 

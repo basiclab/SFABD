@@ -31,6 +31,7 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--conv2d_num_layers', default=8)
 @click.option('--joint_space_size', default=256)
 @click.option('--dual_space/--no-dual_space', default=False)
+@click.option('--resnet', default=34)
 # confidence loss
 @click.option('--IoULoss', 'IoULoss', default="src.losses.iou.ScaledIoULoss")
 @click.option('--min_iou', default=0.5)

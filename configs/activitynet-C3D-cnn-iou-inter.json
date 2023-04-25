@@ -40,7 +40,7 @@
 
     "start_dns_epoch": 999,
 
-    "epochs": 17,
+    "epochs": 12,
     "batch_size": 48,
     "base_lr": 8e-4,
     "bert_lr": 8e-5,

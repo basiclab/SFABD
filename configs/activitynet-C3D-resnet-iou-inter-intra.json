@@ -15,6 +15,7 @@
     "conv2d_num_layers": 4,
     "joint_space_size": 256,
     "dual_space": false,
+    "resnet": 50,
 
     "IoULoss": "src.losses.iou.ScaledIoULoss",
     "min_iou": 0.5,
@@ -40,13 +41,13 @@
 
     "start_dns_epoch": 999,
 
-    "epochs": 10,
-    "batch_size": 24,
+    "epochs": 12,
+    "batch_size": 48,
     "base_lr": 8e-4,
     "bert_lr": 8e-5,
     "milestones": [8, 15],
     "step_gamma": 0.1,
-    "bert_fire_start": 1,
+    "bert_fire_start": 5,
     "grad_clip": 5.0,
 
     "best_metric": "R@1,IoU=0.7",

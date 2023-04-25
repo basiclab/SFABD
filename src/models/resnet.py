@@ -94,7 +94,7 @@ class BasicBlock(nn.Module):
 
 
 class BottleneckBlock(nn.Module):
-    expansion: int = 2
+    expansion: int = 4
 
     def __init__(
         self,
@@ -239,22 +239,31 @@ class ProposalConv(MaskedResNet):
         in_channel: int,            # input feature size (512)
         hidden_channel: int,        # hidden feature size (512)
         out_channel: int,           # output feature size (256)
+        resnet: int,                # Which resnet model
         dual_space: bool = False,   # whether to use dual feature scpace
         *args,
         **kwargs,
     ):
+        if resnet == 18:
+            self.block = BasicBlock
+            self.layer_list = [2, 2, 2, 2]
+        elif resnet == 34:
+            self.block = BasicBlock
+            self.layer_list = [3, 4, 6, 3]
+        elif resnet == 50:
+            self.block = BottleneckBlock
+            self.layer_list = [3, 4, 6, 3]
+        else:
+            raise ValueError(f'resnet {resnet} is not valid!')
+
         super().__init__(
             in_channel,
             hidden_channel,
             out_channel,
-            BasicBlock,
-            # BottleneckBlock,
-            [2, 2, 2, 2]   # resnet-18
-            # [3, 4, 6, 3]    # resnet-34, or resnet-50 with bottleneck
+            self.block,             # ex. BottleneckBlock, BasicBlock
+            self.layer_list,        # ex. [2, 2, 2, 2]
         )
         self.dual_space = dual_space
-        # self.block = BottleneckBlock
-        self.block = BasicBlock
 
         if dual_space:
             self.proj1 = conv1x1(hidden_channel * self.block.expansion, out_channel, 1)  # 512 -> 256

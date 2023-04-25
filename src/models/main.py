@@ -88,6 +88,7 @@ class MMN(nn.Module):
         conv2d_kernel_size: int = 5,            # ProposalConv
         conv2d_num_layers: int = 8,             # ProposalConv
         joint_space_size: int = 256,
+        resnet: int = 50,
         dual_space: bool = False,               # whether to use dual feature space
     ):
         """
@@ -99,25 +100,46 @@ class MMN(nn.Module):
         self.dual_space = dual_space
         self.aggregate = AggregateVideo(num_init_clips)
 
-        self.video_model = nn.Sequential(
-            Conv1dPool(                                     # [B, C, NUM_INIT_CLIPS]
-                feat1d_in_channel,
-                feat1d_out_channel,
-                feat1d_pool_kernel_size,
-                feat1d_pool_stride_size,
-            ),                                              # [B, C, N]
-            SparseMaxPool(feat2d_pool_counts),              # [B, C, N, N]
-            # SparsePropConv(feat2d_pool_counts, feat1d_out_channel),
-            construct_class(
-                backbone,
-                in_channel=feat1d_out_channel,
-                hidden_channel=conv2d_hidden_channel,
-                out_channel=joint_space_size,
-                kernel_size=conv2d_kernel_size,
-                num_layers=conv2d_num_layers,
-                dual_space=dual_space,                      # [B, C, N, N]
-            ),
-        )
+        if "resnet" in backbone:
+            self.video_model = nn.Sequential(
+                Conv1dPool(                                     # [B, C, NUM_INIT_CLIPS]
+                    feat1d_in_channel,
+                    feat1d_out_channel,
+                    feat1d_pool_kernel_size,
+                    feat1d_pool_stride_size,
+                ),                                              # [B, C, N]
+                SparseMaxPool(feat2d_pool_counts),              # [B, C, N, N]
+                construct_class(
+                    backbone,
+                    in_channel=feat1d_out_channel,
+                    hidden_channel=conv2d_hidden_channel,
+                    out_channel=joint_space_size,
+                    kernel_size=conv2d_kernel_size,
+                    num_layers=conv2d_num_layers,
+                    resnet=resnet,
+                    dual_space=dual_space,                      # [B, C, N, N]
+                ),
+            )
+        # original ConvNet
+        else:
+            self.video_model = nn.Sequential(
+                Conv1dPool(                                     # [B, C, NUM_INIT_CLIPS]
+                    feat1d_in_channel,
+                    feat1d_out_channel,
+                    feat1d_pool_kernel_size,
+                    feat1d_pool_stride_size,
+                ),                                              # [B, C, N]
+                SparseMaxPool(feat2d_pool_counts),              # [B, C, N, N]
+                construct_class(
+                    backbone,
+                    in_channel=feat1d_out_channel,
+                    hidden_channel=conv2d_hidden_channel,
+                    out_channel=joint_space_size,
+                    kernel_size=conv2d_kernel_size,
+                    num_layers=conv2d_num_layers,
+                    dual_space=dual_space,                      # [B, C, N, N]
+                ),
+            )
 
         self.sents_model = LanguageModel(joint_space_size, dual_space)                   # [S, C]
 
