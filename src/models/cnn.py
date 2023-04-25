@@ -14,7 +14,6 @@ class ProposalConv(nn.Module):
         dual_space: bool = False,   # whether to use dual feature scpace
         *args,
         **kwargs,
-
     ):
         super().__init__()
         self.kernel_size = kernel_size

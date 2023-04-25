@@ -17,8 +17,9 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--num_init_clips', default=32)
 @click.option('--num_clips', default=16)
 # datasets
-@click.option('--TrainDataset', "TrainDataset", default='src.datasets.charades.Charades')
-@click.option('--TestDataset', "TestDataset", default='src.datasets.charades.Charades')
+@click.option('--TrainDataset', "TrainDataset", default='src.datasets.charades.CharadesSTAI3DTrain')
+@click.option('--ValDataset', "ValDataset", default='src.datasets.activitynet.ActivityNetI3DVal')
+@click.option('--TestDataset', "TestDataset", default='src.datasets.charades.CharadesSTAI3DTest')
 @click.option('--MultiTestDataset', "MultiTestDataset", default='src.datasets.charades.CharadesSTAI3DMultiTest')
 # model
 @click.option('--backbone', default="src.models.resnet.ProposalConv")

@@ -1,12 +1,12 @@
 {
     "num_init_clips": 128,
     "num_clips": 64,
-    "TrainDataset": "src.datasets.activitynet.ActivityNetI3DTrain",
+    "TrainDataset": "src.datasets.activitynet.ActivityNetC3DTrain",
     "ValDataset": "src.datasets.activitynet.ActivityNetC3DVal",
-    "TestDataset": "src.datasets.activitynet.ActivityNetI3DTest",
-    "MultiTestDataset": "src.datasets.activitynet.ActivityNetI3DMultiTest",
+    "TestDataset": "src.datasets.activitynet.ActivityNetC3DTest",
+    "MultiTestDataset": "src.datasets.activitynet.ActivityNetC3DMultiTest",
 
-    "backbone": "src.models.resnet.ProposalConv",
+    "backbone": "src.models.cnn.ProposalConv",
     "feat1d_out_channel": 512,
     "feat1d_pool_kernel_size": 2,
     "feat2d_pool_counts": [16, 8, 8],
@@ -34,21 +34,21 @@
     "inter_weight": 0.1,
 
     "IntraContrastiveLoss": "src.losses.contrastive.IntraContrastiveLoss",
-    "intra_t": 0.1,
+    "intra_t": 0.0,
     "intra_m": 0.0,
-    "intra_weight": 0.1,
+    "intra_weight": 0,
 
     "start_dns_epoch": 999,
 
-    "epochs": 10,
-    "batch_size": 24,
-    "base_lr": 1e-3,
-    "bert_lr": 1e-5,
-    "milestones": [8, 15],
+    "epochs": 17,
+    "batch_size": 48,
+    "base_lr": 8e-4,
+    "bert_lr": 8e-5,
+    "milestones": [7, 15],
     "step_gamma": 0.1,
-    "bert_fire_start": 1,
+    "bert_fire_start": 5,
     "grad_clip": 5.0,
 
     "best_metric": "R@1,IoU=0.7",
-    "logdir": "./logs/activitynet-I3D-resnet-iou-inter-intra"
+    "logdir": "./logs/activitynet-C3D-resnet-iou-inter-intra"
 }

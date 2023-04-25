@@ -46,7 +46,7 @@ class ActivityNetC3DTest(ActivityNetC3D):
     def __init__(self):
         super().__init__(ann_file='./data/ActivityNet/test.json')
 
-        
+
 class ActivityNetC3DMultiTest(ActivityNetC3D):
     def __init__(self):
         super().__init__(ann_file='./data/ActivityNet/multi_test.json')

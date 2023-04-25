@@ -2,6 +2,7 @@
     "num_init_clips": 128,
     "num_clips": 64,
     "TrainDataset": "src.datasets.activitynet.ActivityNetC3DTrain",
+    "ValDataset": "src.datasets.activitynet.ActivityNetC3DVal",
     "TestDataset": "src.datasets.activitynet.ActivityNetC3DTest",
     "MultiTestDataset": "src.datasets.activitynet.ActivityNetC3DMultiTest",
 

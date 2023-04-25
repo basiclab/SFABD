@@ -71,6 +71,10 @@ class CollateBase(torch.utils.data.Dataset):
         pbar.close()
         return annos
 
+    # def augmentation(self, anno, video_feats):
+    #     """Do multi positive augmentation"""
+    #     raise NotImplementedError
+
     def __len__(self):
         return len(self.annos)
 
@@ -79,6 +83,7 @@ class CollateBase(torch.utils.data.Dataset):
         video_feats = self.get_feat(anno)
 
         # Do video feature-level augmentation here
+        # anno, video_features = self.augmentation(anno, video_feats)
 
         return {
             'idx': torch.ones(anno['num_sentences'], dtype=torch.long) * idx,

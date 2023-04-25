@@ -136,6 +136,18 @@ def print_metrics(mAPs: Dict[str, float], recalls: Dict[str, float]) -> None:
         print(f"{row1}   {row2}")
 
 
+def print_recall(recalls: Dict[str, float]) -> None:
+    table = build_recall(recalls)
+    for row in table:
+        print(f"{row}")
+
+
+def print_mAPs(mAPs: Dict[str, float]) -> None:
+    table = build_mAP(mAPs)
+    for row in table:
+        print(f"{row}")
+
+
 def print_multi_recall(multi_recalls: Dict[str, float]) -> None:
     table = build_recall(multi_recalls)
     for row in table:
