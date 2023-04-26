@@ -68,7 +68,6 @@ class CharadesI3D(CollateBase):
     #     print(f"num_targets:{anno['num_targets']}")
     #     print(f"num_targets:{len(anno['num_targets'])}")
     #     print(f"num sentences: {anno['num_sentences']}")
-        
     #     start_time = 0
     #     empty_clips = []
     #     # # sort moments by the starting time

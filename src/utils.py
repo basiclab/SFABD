@@ -122,15 +122,15 @@ def nms(
 
 
 def scores2ds_to_moments(
-    scores2ds: torch.Tensor,                                            # [B, N, N]
+    scores2ds: torch.Tensor,                                            # [S, N, N]
     mask2d: torch.Tensor,                                               # [N, N]
 ) -> Tuple[torch.Tensor, torch.Tensor]:                                 # [P, 2]
-    B, N, _ = scores2ds.shape
+    S, N, _ = scores2ds.shape
     moments = mask2d.nonzero()                                          # [P, 2]
-    scores1ds = scores2ds[:, moments[:, 0], moments[:, 1]]              # [B, P]
+    scores1ds = scores2ds[:, moments[:, 0], moments[:, 1]]              # [S, P]
     moments[:, 1] += 1                                                  # [P, 2]
     moments = moments / N                                               # [P, 2]
-    moments = moments.unsqueeze(0).expand(B, -1, -1)                    # [B, P, 2]
+    moments = moments.unsqueeze(0).expand(S, -1, -1)                    # [S, P, 2]
     return moments, scores1ds
 
 

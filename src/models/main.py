@@ -11,9 +11,8 @@ from src.models.modules import (
 
 # cos sim between 2D proposal map and query
 def compute_scores(
-    video_feats: torch.Tensor,      # [B, C, N, N]
+    video_feats: torch.Tensor,      # [S, C, N, N]
     sents_feats: torch.Tensor,      # [S, C]
-    num_sentences: torch.Tensor,    # [B]
 ) -> torch.Tensor:                  # [S, N, N]
     """
     Return cosine similarity between each proposal and corresponding query.
@@ -21,14 +20,10 @@ def compute_scores(
     Return:
         scores_matrix: [S, N, N], the value range is [-1, 1]
     """
-    device = num_sentences.device
-    scatter_s2v = torch.arange(len(num_sentences), device=device).long()
-    scatter_s2v = scatter_s2v.repeat_interleave(num_sentences)
-
     video_feats = F.normalize(video_feats, dim=1)
     sents_feats = F.normalize(sents_feats, dim=1)
     # cosine sim
-    scores2d = video_feats[scatter_s2v] * sents_feats[:, :, None, None]
+    scores2d = video_feats * sents_feats[:, :, None, None]
     scores2d = scores2d.sum(dim=1)   # [S, N, N]
     return scores2d
 
@@ -37,7 +32,6 @@ def compute_scores(
 def iou_scores(
     video_feats: torch.Tensor,              # [B, C, N, N]
     sents_feats: torch.Tensor,              # [S, C]
-    num_sentences: torch.Tensor,            # [B]
     mask2d: torch.Tensor,                   # [N, N]
     scale: float = 10,
 ) -> Tuple[torch.Tensor, torch.Tensor]:     # [S, N, N]
@@ -48,7 +42,7 @@ def iou_scores(
         scores2d: the value range is [0, 1]
         logits2d: the value range is [-scale, +scale]
     """
-    scores2d = compute_scores(video_feats, sents_feats, num_sentences)  # [-1, 1]
+    scores2d = compute_scores(video_feats, sents_feats)  # [-1, 1]
     logits2d = scores2d * scale                                         # [-scale, scale]
     scores2d = torch.sigmoid(logits2d.detach())                         # [0, 1]
     scores2d = scores2d * mask2d.unsqueeze(0)
@@ -59,7 +53,6 @@ def iou_scores(
 def con_scores(
     video_feats: torch.Tensor,      # [B, C, N, N]
     sents_feats: torch.Tensor,      # [S, C]
-    num_sentences: torch.Tensor,    # [B]
     mask2d: torch.Tensor,           # [N, N]
 ) -> torch.Tensor:                  # [S, N, N]
     """
@@ -68,7 +61,7 @@ def con_scores(
     Return:
         scores_matrix: [B, N, N], the value range is [0, 1]
     """
-    scores2d = compute_scores(video_feats, sents_feats, num_sentences)
+    scores2d = compute_scores(video_feats, sents_feats)
     scores2d = (scores2d + 1) / 2
     scores2d = scores2d * mask2d.unsqueeze(0)
     return scores2d
@@ -164,24 +157,27 @@ class MMN(nn.Module):
 
         B = video_feats.shape[0]
 
-        video_feats = self.aggregate(video_feats, video_masks)      # [B, ?, C]
-        video_feats = video_feats.permute(0, 2, 1)                  # [B, C, ?]
+        video_feats = self.aggregate(video_feats, video_masks)      # [S, ?, C]
+        video_feats = video_feats.permute(0, 2, 1)                  # [S, C, ?]
         video_feats1, video_feats2, mask2d = self.video_model(video_feats)
-        sents_feats1, sents_feats2 = self.sents_model(sents_tokens, sents_masks)
+        sents_feats1, sents_feats2 = self.sents_model(
+            sents_tokens,
+            sents_masks
+        )                   # [S, C]
 
         if self.dual_space:
             iou_scores2d, logits2d = iou_scores(
-                video_feats1, sents_feats1, num_sentences, mask2d)
+                video_feats1, sents_feats1, mask2d)
             con_scores2d = con_scores(
-                video_feats2, sents_feats2, num_sentences, mask2d)
+                video_feats2, sents_feats2, mask2d)
             scores2d = torch.sqrt(con_scores2d) * iou_scores2d
         # common embedding space
         else:
             scores2d, logits2d = iou_scores(
-                video_feats1, sents_feats1, num_sentences, mask2d)
+                video_feats1, sents_feats1, mask2d)
 
         return (
-            video_feats2,       # [B, C, N, N]  for contrastive learning
+            video_feats2,       # [S, C, N, N]  for contrastive learning
             sents_feats2,       # [S, C]        for contrastive learning
             logits2d,           # [S, N, N]     for iou loss (sim score * scale=10)
             scores2d.detach(),  # [S, N, N]     for evaluation

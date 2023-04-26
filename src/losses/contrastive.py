@@ -39,7 +39,7 @@ class InterContrastiveLoss(LogCrossEntropy):
 
     def forward(
         self,
-        video_feats: torch.Tensor,      # [B, C, N, N]
+        video_feats: torch.Tensor,      # [S, C, N, N]
         sents_feats: torch.Tensor,      # [S, C]
         num_sentences: torch.Tensor,    # [B]           number of sentences for each video
         num_targets: torch.Tensor,      # [S]           number of targets for each sentence
@@ -66,8 +66,8 @@ class InterContrastiveLoss(LogCrossEntropy):
                 }
             )
 
-        B, C, N, _ = video_feats.shape
-        S = num_sentences.sum().cpu().item()
+        S, C, N, _ = video_feats.shape
+        B = num_sentences.shape[0]
         M = num_targets.sum().cpu().item()
         P = mask2d.long().sum()
         K = self.pos_topk
@@ -75,28 +75,33 @@ class InterContrastiveLoss(LogCrossEntropy):
         assert iou2d.shape == (S, N, N), f"{iou2d.shape} != {(S, N, N)}"
         assert iou2ds.shape == (M, N, N), f"{iou2ds.shape} != {(M, N, N)}"
 
-        # sentence idx -> video idx
-        scatter_s2v = torch.arange(B, device=device).long()
-        scatter_s2v = scatter_s2v.repeat_interleave(num_sentences)      # [S]
+        scatter_b2s = []
+        count = 0
+        for num_sentence in num_sentences:
+            scatter_b2s.append(count)
+            count = count + num_sentence.item()
+        scatter_b2s = torch.tensor(scatter_b2s, device=device)            # [B]
+
+        scatter_s2b = torch.arange(B, device=device).long()
+        scatter_s2b = scatter_s2b.repeat_interleave(num_sentences)
+
         # moment idx -> sentence idx
         scatter_m2s = torch.arange(S, device=device).long()
         scatter_m2s = scatter_m2s.repeat_interleave(num_targets)        # [M]
-        # moment idx -> video idx
-        scatter_m2v = scatter_s2v[scatter_m2s]
 
-        video_feats = video_feats.masked_select(mask2d).view(B, C, -1)  # [B, C, P]
-        video_feats = video_feats.permute(0, 2, 1)                      # [B, P, C]
+        video_feats = video_feats.masked_select(mask2d).view(S, C, -1)  # [S, C, P]
+        video_feats = video_feats.permute(0, 2, 1)                      # [S, P, C]
         iou2d = iou2d.masked_select(mask2d).view(S, -1)                 # [S, P]
         iou2ds = iou2ds.masked_select(mask2d).view(M, -1)               # [M, P]
 
         # normalize for cosine similarity
-        video_feats = F.normalize(video_feats.contiguous(), dim=-1)     # [B, P, C]
+        video_feats = F.normalize(video_feats.contiguous(), dim=-1)     # [S, P, C]
         sents_feats = F.normalize(sents_feats.contiguous(), dim=-1)     # [S, C]
 
         # === inter video (topk proposal -> all sentences)
         topk_idxs = iou2ds.topk(K, dim=1)[1]                    # [M, K]
         topk_idxs = topk_idxs.unsqueeze(-1).expand(-1, -1, C)   # [M, K, C]
-        allm_video_feats = video_feats[scatter_m2v]             # [M, P, C]
+        allm_video_feats = video_feats[scatter_m2s]             # [M, P, C]
         topk_video_feats = allm_video_feats.gather(
             dim=1, index=topk_idxs)                             # [M, K, C]
 
@@ -112,7 +117,6 @@ class InterContrastiveLoss(LogCrossEntropy):
 
         mask = ~torch.eye(S, device=device).bool()              # [S, S]
         inter_video_neg_mask = mask[scatter_m2s].unsqueeze(1)   # [M, 1, S]
-
         loss_inter_video = super().forward(
             inter_video_pos,                                    # [M, K]
             inter_video_all,                                    # [M, K, S]
@@ -123,56 +127,22 @@ class InterContrastiveLoss(LogCrossEntropy):
 
         # === inter query (sentence -> all video proposals)
         inter_query_pos = inter_video_pos                       # [M, K]
-
+        # need to convert video_feats from [S, P, C] to [B, P, C]
         inter_query_all = torch.mm(
             sents_feats,                                        # [S, C]
-            video_feats.view(-1, C).t(),                        # [C, B * P]
+            video_feats[scatter_b2s].view(-1, C).t(),           # [C, B * P]
         ).unsqueeze(1)                                          # [S, 1, B * P]
 
         pos_mask = torch.eye(B, device=device).bool()           # [B, B]
         pos_mask = pos_mask.unsqueeze(-1)                       # [B, B, 1]
         pos_mask = pos_mask.expand(-1, -1, P)                   # [B, B, P]
         pos_mask = pos_mask.reshape(B, -1)                      # [B, B * P]
-        pos_mask = pos_mask[scatter_s2v]                        # [S, B * P]
+        pos_mask = pos_mask[scatter_s2b]                        # [S, B * P]
         assert pos_mask.long().sum(dim=-1).eq(P).all()
         s2v_pos_mask = iou2d > self.neg_iou                     # [S, P]
         local_mask = pos_mask.clone()                           # [S, B * P]
         pos_mask[local_mask] = s2v_pos_mask.view(-1)            # [S, B * P]
         inter_query_neg_mask = ~pos_mask.unsqueeze(1)           # [S, 1, B * P]
-
-        # Removing top-x% false negatives
-        # num_t = 0
-        # for sent_idx, (num_target, neg_mask) in enumerate(zip(num_targets, inter_query_neg_mask)):
-        #     sent_targets_intra_sim = intra_video_all[num_t:num_t + num_target].mean(dim=0)  # [B * P]
-        #     neg_mask_intra_sim = sent_targets_intra_sim.masked_select(neg_mask.squeeze())
-        #     remove_mask = torch.ones_like(neg_mask_intra_sim).bool()
-        #     # sort by sim score and remove top-x% from neg_mask
-        #     K = int(self.top_neg_removal_percent * int(neg_mask_intra_sim.size(dim=0)))
-        #     topk_idxs = neg_mask_intra_sim.topk(K, dim=0)[1]             # [K]
-        #     # neg samples to be removed
-        #     remove_mask[topk_idxs] = 0
-        #     inter_query_neg_mask[sent_idx][neg_mask.clone()] = remove_mask
-        #     num_t += num_target
-
-        # TODO Try negative sampling strategy
-        # neg_samples_num = 512
-        # sampled_negative = torch.multinomial(
-        #     inter_query_neg_mask.squeeze().float(),
-        #     neg_samples_num, replacement=False
-        # )                                                       # [S, neg_samples_num]
-        # Sorted sampling, high sim -> low sim
-        # [-1, 1] -> [0, 1] to avoid negative numbers
-        # sampled_negative = torch.multinomial(
-        #     (((inter_query_neg_mask * inter_query_all) + 1) / 2).squeeze().float(),
-        #     neg_samples_num, replacement=False
-        # )                                                     # [S, neg_samples_num]
-
-        # sampled_inter_query_neg_mask = torch.zeros_like(inter_query_neg_mask.squeeze())
-        # # from https://discuss.pytorch.org/t/setting-the-values-at-specific-indices-of-a-2d-tensor/168564
-        # sampled_inter_query_neg_mask[range(sampled_negative.shape[0]),
-        #                              sampled_negative.t()] = 1  # [S, B * P]
-        # sampled_inter_query_neg_mask = sampled_inter_query_neg_mask.unsqueeze(1)
-        # assert sampled_inter_query_neg_mask.sum(dim=-1).eq(neg_samples_num).all()
 
         loss_inter_query = super().forward(
             inter_query_pos,                                    # [M, K]
@@ -211,7 +181,7 @@ class IntraContrastiveLoss(LogCrossEntropy):
 
     def forward(
         self,
-        video_feats: torch.Tensor,      # [B, C, N, N]
+        video_feats: torch.Tensor,      # [S, C, N, N]
         sents_feats: torch.Tensor,      # [S, C]
         num_sentences: torch.Tensor,    # [B]           number of sentences for each video
         num_targets: torch.Tensor,      # [S]           number of targets for each sentence
@@ -237,9 +207,8 @@ class IntraContrastiveLoss(LogCrossEntropy):
                     'loss/intra_video': zero,
                 }
             )
-
-        B, C, N, _ = video_feats.shape
-        S = num_sentences.sum().cpu().item()
+        S, C, N, _ = video_feats.shape
+        B = num_sentences.shape[0]
         M = num_targets.sum().cpu().item()
         P = mask2d.long().sum()
         K = self.pos_topk
@@ -247,22 +216,26 @@ class IntraContrastiveLoss(LogCrossEntropy):
         assert iou2d.shape == (S, N, N), f"{iou2d.shape} != {(S, N, N)}"
         assert iou2ds.shape == (M, N, N), f"{iou2ds.shape} != {(M, N, N)}"
 
-        # sentence idx -> video idx
-        scatter_s2v = torch.arange(B, device=device).long()
-        scatter_s2v = scatter_s2v.repeat_interleave(num_sentences)      # [S]
-        # moment idx -> sentence idx
         scatter_m2s = torch.arange(S, device=device).long()
         scatter_m2s = scatter_m2s.repeat_interleave(num_targets)        # [M]
-        # moment idx -> video idx
-        scatter_m2v = scatter_s2v[scatter_m2s]
 
-        video_feats = video_feats.masked_select(mask2d).view(B, C, -1)  # [B, C, P]
-        video_feats = video_feats.permute(0, 2, 1)                      # [B, P, C]
+        scatter_b2s = []
+        count = 0
+        for num_sentence in num_sentences:
+            scatter_b2s.append(count)
+            count = count + num_sentence.item()
+        scatter_b2s = torch.tensor(scatter_b2s, device=device)            # [B]
+
+        scatter_s2b = torch.arange(B, device=device).long()
+        scatter_s2b = scatter_s2b.repeat_interleave(num_sentences)
+
+        video_feats = video_feats.masked_select(mask2d).view(S, C, -1)  # [S, C, P]
+        video_feats = video_feats.permute(0, 2, 1)                      # [S, P, C]
         iou2d = iou2d.masked_select(mask2d).view(S, -1)                 # [S, P]
         iou2ds = iou2ds.masked_select(mask2d).view(M, -1)               # [M, P]
 
         # normalize for cosine similarity
-        video_feats = F.normalize(video_feats.contiguous(), dim=-1)     # [B, P, C]
+        video_feats = F.normalize(video_feats.contiguous(), dim=-1)     # [S, P, C]
         sents_feats = F.normalize(sents_feats.contiguous(), dim=-1)     # [S, C]
 
         # Enumerate positive pairs
@@ -289,7 +262,7 @@ class IntraContrastiveLoss(LogCrossEntropy):
         # top-K positive proposals
         topk_idxs = iou2ds.topk(K, dim=1)[1]                    # [M, K]
         topk_idxs = topk_idxs.unsqueeze(-1).expand(-1, -1, C)   # [M, K, C]
-        allm_video_feats = video_feats[scatter_m2v]             # [M, P, C]
+        allm_video_feats = video_feats[scatter_m2s]             # [M, P, C]
         topk_video_feats = allm_video_feats.gather(
             dim=1, index=topk_idxs)                             # [M, K, C]
 
@@ -303,7 +276,7 @@ class IntraContrastiveLoss(LogCrossEntropy):
         # all scores
         intra_video_all = torch.mm(
             pos_video_feats,                                    # [M * K, C]
-            video_feats.view(-1, C).t(),                        # [C, B * P]
+            video_feats[scatter_b2s].view(-1, C).t(),           # [C, B * P]
         )                                                       # [M * K, B * P]
 
         # negative mask
@@ -311,69 +284,12 @@ class IntraContrastiveLoss(LogCrossEntropy):
         pos_mask = pos_mask.unsqueeze(-1)                       # [B, B, 1]
         pos_mask = pos_mask.expand(-1, -1, P)                   # [B, B, P]
         pos_mask = pos_mask.reshape(B, -1)                      # [B, B * P]
-        pos_mask = pos_mask[scatter_s2v]                        # [S, B * P]
+        pos_mask = pos_mask[scatter_s2b]                        # [S, B * P]
         assert pos_mask.long().sum(dim=-1).eq(P).all()
         s2v_pos_mask = iou2d > self.neg_iou                     # [S, P]
         local_mask = pos_mask.clone()                           # [S, B * P]
         pos_mask[local_mask] = s2v_pos_mask.view(-1)            # [S, B * P]
         intra_video_neg_mask = ~pos_mask                        # [S, B * P]
-
-        # intra_video_temp = intra_video_all.reshape(M, K, -1).mean(dim=1)  # [M, B * P]
-        # num_t = 0
-        # for sent_idx, (num_target, neg_mask) in enumerate(zip(num_targets, intra_video_neg_mask)):
-        #     sent_targets_intra_sim = intra_video_temp[num_t:num_t + num_target].mean(dim=0)  # [B * P]
-        #     neg_mask_intra_sim = sent_targets_intra_sim.masked_select(neg_mask.squeeze())
-        #     remove_mask = torch.ones_like(neg_mask_intra_sim).bool()
-        #     # sort by sim score and remove top-x% from neg_mask
-        #     K = int(self.top_neg_removal_percent * int(neg_mask_intra_sim.size(dim=0)))
-        #     topk_idxs = neg_mask_intra_sim.topk(K, dim=0)[1]             # [K]
-        #     # neg samples to be removed
-        #     remove_mask[topk_idxs] = 0
-        #     intra_video_neg_mask[sent_idx][neg_mask.clone()] = remove_mask
-        #     num_t += num_target
-
-        # TODO Try negative sampling strategy
-        # neg_samples_num = 512
-        # sampled_negative = torch.multinomial(
-        #     intra_video_neg_mask.float(),
-        #     neg_samples_num, replacement=False
-        # )                                                       # [S, neg_samples_num]
-
-        # Sorted sampling, high sim -> low sim
-        # sampled_negative = torch.multinomial(
-        #     (((intra_video_neg_mask[scatter_e2s] * intra_video_all[ref_idx]) + 1) / 2).float(),
-        #     neg_samples_num, replacement=False
-        # )                                                       # [E, neg_samples_num]
-
-        # for uniform sampling
-        # sampled_intra_video_neg_mask = torch.zeros_like(intra_video_neg_mask)
-        # for sorted sampling
-        # sampled_intra_video_neg_mask = torch.zeros((sampled_negative.shape[0], B * P),
-        #                                            device=device,
-        #                                            )            # [E, B * P]
-        # from https://discuss.pytorch.org/t/setting-the-values-at-specific-indices-of-a-2d-tensor/168564
-        # sampled_intra_video_neg_mask[range(sampled_negative.shape[0]),
-        #                              sampled_negative.t()] = 1  # [S or E, B * P]
-
-        # assert sampled_intra_video_neg_mask.sum(dim=-1).eq(neg_samples_num).all()
-
-        # uniformly sampled negative mask
-        # loss_intra_video = super().forward(
-        #     intra_video_pos,                                    # [E]
-        #     intra_video_all[ref_idx],                           # [E, B * P]
-        #     sampled_neg_mask[scatter_e2s],                      # [E, B * P]
-        #     self.t,
-        #     self.m
-        # )
-
-        # sorted sampled negative mask
-        # loss_intra_video = super().forward(
-        #     intra_video_pos,                                    # [E]
-        #     intra_video_all[ref_idx],                           # [E, B * P]
-        #     sampled_intra_video_neg_mask,                       # [E, B * P]
-        #     self.t,
-        #     self.m
-        # )
 
         loss_intra_video = super().forward(
             intra_video_pos,                                    # [E]

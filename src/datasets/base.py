@@ -149,9 +149,33 @@ class CollateBase(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.annos)
 
+    # def __getitem__(self, idx):
+    #     anno = self.annos[idx]
+    #     video_feats = self.get_feat(anno)   # [seq_len, dim]
+
+    #     return {
+    #         'idx': torch.ones(anno['num_sentences'], dtype=torch.long) * idx,
+    #         'video_feats': video_feats,
+    #         **anno,
+    #     }
+
     def __getitem__(self, idx):
+        '''
+        anno: {
+            'vid': 'FLDHS',
+            'sentences': ['person are putting stuff in a box.', 'person puts it in a box.'],
+            'num_sentences': tensor(2),
+            'num_targets': tensor([1, 1]),
+            'tgt_moments': tensor([[0.1850, 0.4385],
+                                    [0.1850, 0.4385]]),
+            'duration': tensor(29.1900),
+            'qids': tensor([0, 0])
+        }
+        '''
         anno = self.annos[idx]
-        video_feats = self.get_feat(anno)
+        video_feats = self.get_feat(anno)   # [seq_len, dim]
+        # duplicate video feats for each query, anno['num_sentences'] times
+        video_feats = video_feats.unsqueeze(0).repeat(anno['num_sentences'], 1, 1)
 
         # 50% do video feature-level augmentation
         # if random.random() > 0.5:
@@ -163,6 +187,44 @@ class CollateBase(torch.utils.data.Dataset):
             'video_feats': video_feats,
             **anno,
         }
+
+    # def collate_fn(
+    #     self,
+    #     batch
+    # ) -> Tuple[Dict[str, torch.Tensor], Dict[str, List]]:
+    #     batch = {
+    #         key: [x[key] for x in batch] for key in batch[0].keys()
+    #     }
+
+    #     sentences = self.tokenizer(
+    #         sum(batch['sentences'], []),    # List of List of str -> List of str
+    #         padding=True,
+    #         return_tensors="pt")
+
+    #     video_lens = torch.tensor([x.shape[0] for x in batch['video_feats']])
+    #     pad_len = video_lens.max()
+    #     for i, video_feats in enumerate(batch['video_feats']):
+    #         # video_feats: [num_sent, seq_len, feat_dim]
+    #         batch['video_feats'][i] = F.pad(
+    #             video_feats, [0, 0, 0, pad_len - len(video_feats)])
+    #     video_masks = torch.arange(pad_len)[None, :] < video_lens[:, None]
+
+    #     # return batch, info
+    #     return {
+    #         'video_feats': torch.stack(batch['video_feats'], dim=0),      # [num_sents, max_seq_len, feat_dim]
+    #         'video_masks': video_masks,                                   # [num_sents, max_seq_len]
+    #         'sents_tokens': sentences['input_ids'],                       # [num_sents, max_sent_len]
+    #         'sents_masks': sentences['attention_mask'],                   # [num_sents, max_sent_len]
+    #         'num_sentences': torch.stack(batch['num_sentences'], dim=0),  # [bs] sum = num_sents
+    #         'num_targets': torch.cat(batch['num_targets'], dim=0),        # [num_targets]
+    #         'tgt_moments': torch.cat(batch['tgt_moments'], dim=0),        # [num_targets, 2]
+    #     }, {
+    #         'qids': batch['qids'],
+    #         'sentences': batch['sentences'],
+    #         'vid': batch['vid'],
+    #         'idx': torch.cat(batch['idx']),
+    #         'duration': batch['duration'],
+    #     }
 
     def collate_fn(
         self,
@@ -177,22 +239,34 @@ class CollateBase(torch.utils.data.Dataset):
             padding=True,
             return_tensors="pt")
 
-        video_lens = torch.tensor([x.shape[0] for x in batch['video_feats']])
+        video_lens = []
+        for video_feat_per_sample in batch['video_feats']:
+            for video_feat_per_query in video_feat_per_sample:
+                video_lens.append(torch.tensor([video_feat_per_query.shape[0]]))
+        video_lens = torch.tensor(video_lens)           # [num_sents]
         pad_len = video_lens.max()
         for i, video_feats in enumerate(batch['video_feats']):
+            # video_feats: [num_sent, seq_len, feat_dim]
             batch['video_feats'][i] = F.pad(
-                video_feats, [0, 0, 0, pad_len - len(video_feats)])
+                video_feats,
+                [
+                    0, 0,                               # for dim = -1
+                    0, pad_len - video_feats.shape[1]   # for dim = -2
+                ]
+            )
+        # for i, video_feat in enumerate(batch['video_feats']):
+        #     print(f"{i}, :{video_feat.shape}")
         video_masks = torch.arange(pad_len)[None, :] < video_lens[:, None]
 
         # return batch, info
         return {
-            'video_feats': torch.stack(batch['video_feats'], dim=0),      # [bs, max_seq_len, 1024]
-            'video_masks': video_masks,                                   # [bs, max_seq_len]
-            'sents_tokens': sentences['input_ids'],                       # [140, max_sent_len]
-            'sents_masks': sentences['attention_mask'],                   # [140, max_sent_len]
-            'num_sentences': torch.stack(batch['num_sentences'], dim=0),  # [bs] sum = 140
-            'num_targets': torch.cat(batch['num_targets'], dim=0),        # [140]
-            'tgt_moments': torch.cat(batch['tgt_moments'], dim=0),        # [140, 2]
+            'video_feats': torch.cat(batch['video_feats'], dim=0),        # [num_sents, max_seq_len, feat_dim]
+            'video_masks': video_masks,                                   # [num_sents, max_seq_len]
+            'sents_tokens': sentences['input_ids'],                       # [num_sents, max_sent_len]
+            'sents_masks': sentences['attention_mask'],                   # [num_sents, max_sent_len]
+            'num_sentences': torch.stack(batch['num_sentences'], dim=0),  # [bs] sum = num_sents
+            'num_targets': torch.cat(batch['num_targets'], dim=0),        # [num_targets]
+            'tgt_moments': torch.cat(batch['tgt_moments'], dim=0),        # [num_targets, 2]
         }, {
             'qids': batch['qids'],
             'sentences': batch['sentences'],

@@ -44,13 +44,6 @@ def test_epoch(
 
     for batch, info in tqdm(loader, ncols=0, leave=False, desc="Inferencing"):
         batch = {key: value.to(device) for key, value in batch.items()}
-        # print(f"video_feats:{batch['video_feats'].shape}")      # [bs, max_seq_len, 1024]
-        # print(f"video_masks:{batch['video_masks'].shape}")      # [bs, max_seq_len]
-        # print(f"sents_tokens:{batch['sents_tokens'].shape}")    # [140, max_sent_len]
-        # print(f"sents_masks:{batch['sents_masks'].shape}")      # [140, max_sent_len]
-        # print(f"num_sentences:{batch['num_sentences'].shape}")  # [bs]
-        # print(f"num_targets:{batch['num_targets'].shape}")      # [140]
-        # print(f"tgt_moments:{batch['tgt_moments'].shape}")      # [140, 2]
         # prediciton
         with torch.no_grad():
             *_, scores2ds, mask2d = model(**batch)
@@ -107,6 +100,13 @@ def val_epoch(
 
     for batch, info in tqdm(loader, ncols=0, leave=False, desc="Inferencing"):
         batch = {key: value.to(device) for key, value in batch.items()}
+        # print(f"video feats:{batch['video_feats'].shape}")
+        # print(f"video_masks:{batch['video_masks'].shape}")
+        # print(f"sents_tokens:{batch['sents_tokens'].shape}")
+        # print(f"sents_masks:{batch['sents_masks'].shape}")
+        # print(f"num_sentences:{batch['num_sentences'].shape}")
+        # print(f"num_targets:{batch['num_targets'].shape}")
+        # print(f"tgt_moments:{batch['tgt_moments'].shape}")
         # prediciton
         with torch.no_grad():
             *_, scores2ds, mask2d = model(**batch)
@@ -122,10 +122,6 @@ def val_epoch(
         }
         true_moments_batch = dist.gather_dict(true_moments_batch, to_cpu=True)
         true_moments.append(true_moments_batch)
-
-        batch = {key: value.cpu() for key, value in batch.items()}
-        iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips)          # [M, N, N]
-        iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])                       # [S, N, N], separate to combined
 
     return pred_moments, true_moments
 
@@ -154,24 +150,12 @@ def train_epoch(
     true_moments = []
     for batch, _ in pbar:
         batch = {key: value.to(device) for key, value in batch.items()}
-        iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips)
-        iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])
+        iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips)  # [M, N, N]
+        iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])               # [S, N, N]
+        # video_feats: [num_sents, seq_len, feat_dim]
         video_feats, sents_feats, logits2d, scores2ds, mask2d = model(**batch)
 
-        # loss_inter, loss_inter_metrics = loss_inter_fn(
-        #     video_feats=video_feats,
-        #     sents_feats=sents_feats,
-        #     num_sentences=batch['num_sentences'],
-        #     num_targets=batch['num_targets'],
-        #     iou2d=iou2d,
-        #     iou2ds=iou2ds,
-        #     mask2d=mask2d,
-        # )
-        #  return neg mask
-        (loss_inter,
-         loss_inter_metrics,
-         bce_sampled_neg_mask,
-         intra_sampled_neg_mask) = loss_inter_fn(
+        loss_inter, loss_inter_metrics = loss_inter_fn(
             video_feats=video_feats,
             sents_feats=sents_feats,
             num_sentences=batch['num_sentences'],
@@ -179,8 +163,21 @@ def train_epoch(
             iou2d=iou2d,
             iou2ds=iou2ds,
             mask2d=mask2d,
-            epoch=epoch,
         )
+        #  return neg mask
+        # (loss_inter,
+        #  loss_inter_metrics,
+        #  bce_sampled_neg_mask,
+        #  intra_sampled_neg_mask) = loss_inter_fn(
+        #     video_feats=video_feats,
+        #     sents_feats=sents_feats,
+        #     num_sentences=batch['num_sentences'],
+        #     num_targets=batch['num_targets'],
+        #     iou2d=iou2d,
+        #     iou2ds=iou2ds,
+        #     mask2d=mask2d,
+        #     epoch=epoch,
+        # )
         loss_intra, loss_intra_metrics = loss_intra_fn(
             video_feats=video_feats,
             sents_feats=sents_feats,
@@ -296,34 +293,8 @@ def training_loop(config: AttrDict):
         )
 
     # loss functions
-    # loss_iou_fn = construct_class(
-    #     config.IoULoss,
-    #     min_iou=config.min_iou,
-    #     max_iou=config.max_iou,
-    #     alpha=config.alpha,
-    #     gamma=config.gamma,
-    #     weight=config.iou_weight,
-    # )
-    # loss_inter_fn = construct_class(
-    #     config.InterContrastiveLoss,
-    #     t=config.inter_t,
-    #     m=config.inter_m,
-    #     neg_iou=config.neg_iou,
-    #     pos_topk=config.pos_topk,
-    #     top_neg_removal_percent=config.top_neg_removal_percent,
-    #     weight=config.inter_weight,
-    # )
-    # loss_intra_fn = construct_class(
-    #     config.IntraContrastiveLoss,
-    #     t=config.intra_t,
-    #     m=config.intra_m,
-    #     neg_iou=config.neg_iou,
-    #     pos_topk=config.pos_topk,
-    #     top_neg_removal_percent=config.top_neg_removal_percent,
-    #     weight=config.intra_weight,
-    # )
     loss_iou_fn = construct_class(
-        config.IoULoss + 'DNS',
+        config.IoULoss,
         min_iou=config.min_iou,
         max_iou=config.max_iou,
         alpha=config.alpha,
@@ -331,31 +302,57 @@ def training_loop(config: AttrDict):
         weight=config.iou_weight,
     )
     loss_inter_fn = construct_class(
-        config.InterContrastiveLoss + 'DNS',
+        config.InterContrastiveLoss,
         t=config.inter_t,
         m=config.inter_m,
         neg_iou=config.neg_iou,
         pos_topk=config.pos_topk,
         top_neg_removal_percent=config.top_neg_removal_percent,
         weight=config.inter_weight,
-        inter_query_threshold=config.inter_query_threshold,
-        intra_video_threshold=config.intra_video_threshold,
-        fusion_ratio=config.fusion_ratio,
-        exponent=config.exponent,
-        neg_samples_num=config.neg_samples_num,
-        start_DNS_epoch=config.start_dns_epoch,
-        rate_step_change=config.rate_step_change,
     )
     loss_intra_fn = construct_class(
-        config.IntraContrastiveLoss + 'DNS',
+        config.IntraContrastiveLoss,
         t=config.intra_t,
         m=config.intra_m,
         neg_iou=config.neg_iou,
         pos_topk=config.pos_topk,
         top_neg_removal_percent=config.top_neg_removal_percent,
         weight=config.intra_weight,
-        mixup_alpha=config.mixup_alpha
     )
+    # loss_iou_fn = construct_class(
+    #     config.IoULoss + 'DNS',
+    #     min_iou=config.min_iou,
+    #     max_iou=config.max_iou,
+    #     alpha=config.alpha,
+    #     gamma=config.gamma,
+    #     weight=config.iou_weight,
+    # )
+    # loss_inter_fn = construct_class(
+    #     config.InterContrastiveLoss + 'DNS',
+    #     t=config.inter_t,
+    #     m=config.inter_m,
+    #     neg_iou=config.neg_iou,
+    #     pos_topk=config.pos_topk,
+    #     top_neg_removal_percent=config.top_neg_removal_percent,
+    #     weight=config.inter_weight,
+    #     inter_query_threshold=config.inter_query_threshold,
+    #     intra_video_threshold=config.intra_video_threshold,
+    #     fusion_ratio=config.fusion_ratio,
+    #     exponent=config.exponent,
+    #     neg_samples_num=config.neg_samples_num,
+    #     start_DNS_epoch=config.start_dns_epoch,
+    #     rate_step_change=config.rate_step_change,
+    # )
+    # loss_intra_fn = construct_class(
+    #     config.IntraContrastiveLoss + 'DNS',
+    #     t=config.intra_t,
+    #     m=config.intra_m,
+    #     neg_iou=config.neg_iou,
+    #     pos_topk=config.pos_topk,
+    #     top_neg_removal_percent=config.top_neg_removal_percent,
+    #     weight=config.intra_weight,
+    #     mixup_alpha=config.mixup_alpha
+    # )
 
     # model
     model_local = MMN(
