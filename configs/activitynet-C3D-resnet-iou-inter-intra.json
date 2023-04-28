@@ -38,11 +38,15 @@
     "intra_t": 0.1,
     "intra_m": 0.0,
     "intra_weight": 0.1,
+    "do_augmentation": true,
+    "mixup_alpha": 0.9,
+    "aug_expand_rate": 1.0,
 
     "start_dns_epoch": 999,
 
     "epochs": 12,
-    "batch_size": 48,
+    "batch_size": 24,
+    "test_batch_size": 24,
     "base_lr": 8e-4,
     "bert_lr": 8e-5,
     "milestones": [8, 15],

@@ -38,7 +38,9 @@
     "intra_t": 0.1,
     "intra_m": 0.0,
     "intra_weight": 0.1,
+    "do_augmentation": true,
     "mixup_alpha": 0.9,
+    "aug_expand_rate": 1.0,
     "start_dns_epoch": 999,
 
     "MultiPositiveContrastiveLoss": "src.losses.contrastive.MultiPositiveContrastiveLoss",

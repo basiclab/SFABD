@@ -64,24 +64,25 @@ def test_epoch(
         iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips)          # [M, N, N]
         iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])                       # [S, N, N], separate to combined
 
-        # ploting batch
-        shift = 0
-        for batch_idx, scores2d in enumerate(scores2ds.cpu()):
-            # nms(pred)
-            num_proposals = pred_moments_batch['num_proposals'][batch_idx]
-            nms_moments = pred_moments_batch["out_moments"][shift: shift + num_proposals]  # [num_proposals, 2]
-            nms_moments = (nms_moments * config.num_clips).round().long()
-            if info['idx'][batch_idx] % 200 == 0:
-                plot_path = os.path.join(
-                    config.logdir,
-                    "plots",
-                    f"{info['idx'][batch_idx]}",
-                    f"epoch_{epoch:02d}.jpg")
-                if epoch == 0:
-                    os.makedirs(os.path.dirname(plot_path), exist_ok=True)
-                plot_moments_on_iou2d(
-                    iou2d[batch_idx], scores2d, nms_moments, plot_path)
-            shift = shift + num_proposals
+        if epoch > 0:
+            # ploting batch
+            shift = 0
+            for batch_idx, scores2d in enumerate(scores2ds.cpu()):
+                # nms(pred)
+                num_proposals = pred_moments_batch['num_proposals'][batch_idx]
+                nms_moments = pred_moments_batch["out_moments"][shift: shift + num_proposals]  # [num_proposals, 2]
+                nms_moments = (nms_moments * config.num_clips).round().long()
+                if info['idx'][batch_idx] % 200 == 0:
+                    plot_path = os.path.join(
+                        config.logdir,
+                        "plots",
+                        f"{info['idx'][batch_idx]}",
+                        f"epoch_{epoch:02d}.jpg")
+                    if epoch == 1:
+                        os.makedirs(os.path.dirname(plot_path), exist_ok=True)
+                    plot_moments_on_iou2d(
+                        iou2d[batch_idx], scores2d, nms_moments, plot_path)
+                shift = shift + num_proposals
 
     return pred_moments, true_moments
 
@@ -246,7 +247,12 @@ def training_loop(config: AttrDict):
     device = dist.get_device()
 
     # train Dataset and DataLoader
-    train_dataset = construct_class(config.TrainDataset)
+    train_dataset = construct_class(
+        config.TrainDataset,
+        do_augmentation=config.do_augmentation,
+        mixup_alpha=config.mixup_alpha,
+        aug_expand_rate=config.aug_expand_rate,
+    )
     train_sampler = DistributedSampler(train_dataset, shuffle=True, seed=config.seed)
     train_loader = DataLoader(
         dataset=train_dataset,

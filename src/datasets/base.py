@@ -1,7 +1,9 @@
 import json
+import math
 import random
 from typing import List, Dict, Tuple
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
@@ -11,10 +13,19 @@ from src import dist
 
 
 class CollateBase(torch.utils.data.Dataset):
-    def __init__(self, ann_file):
+    def __init__(
+        self,
+        ann_file,
+        do_augmentation=False,
+        mixup_alpha=0.9,
+        aug_expand_rate=1.0,
+    ):
         self.tokenizer = DistilBertTokenizer.from_pretrained(
             "distilbert-base-uncased")
         self.annos = self.parse_anno(ann_file)
+        self.do_augmentation = do_augmentation
+        self.mixup_alpha = mixup_alpha
+        self.aug_expand_rate = aug_expand_rate
 
     def get_feat(self, anno):
         """Get video features for a single video"""
@@ -38,7 +49,14 @@ class CollateBase(torch.utils.data.Dataset):
             tgt_moments = []
             num_targets = []
             qids = []
-            for anno in video_data['annotations']:
+            # TODO: sample at most k samples to prevent large VRAM usage
+            k = 5
+            if len(video_data['annotations']) > k:
+                sampled_annos = random.sample(video_data['annotations'], k)
+            else:
+                sampled_annos = video_data['annotations']
+
+            for anno in sampled_annos:
                 timestamps = []
                 for timestamp in anno['timestamps']:
                     timestamp = torch.Tensor(timestamp)
@@ -72,79 +90,239 @@ class CollateBase(torch.utils.data.Dataset):
         pbar.close()
         return annos
 
+    def downsample(
+        self,
+        video_feats: torch.tensor,          # [seq_len, feat_dim]
+        method: str,
+    ) -> torch.tensor:
+        if method == 'odd':
+            video_feats = video_feats[::2]                          # [ceil(seq_len / 2), feat_dim]
+
+        elif method == 'avg_pooling':
+            video_feats = F.avg_pool1d(video_feats.t(), 2, 2, ceil_mode=True).t()   # [ceil(seq_len / 2), feat_dim]
+
+        elif method == 'max_pooling':
+            video_feats = F.max_pool1d(video_feats.t(), 2, 2, ceil_mode=True).t()   # [ceil(seq_len / 2), feat_dim]
+
+        else:
+            raise ValueError(f"Unknown downsampling method {method}")
+
+        return video_feats
     # def augmentation(self, anno, video_feats):
     #     """Do multi positive augmentation"""
     #     raise NotImplementedError
 
-    # def augmentation(self, anno, video_feats):
-    #     """Do multi positive augmentation"""
-    #     duration = anno['duration']
-    #     # target moments of whole query-moment pairs in same video
-    #     moments = anno['tgt_moments']
-    #     '''
-    #     anno: {
-    #         'vid': 'FLDHS',
-    #         'sentences': ['person are putting stuff in a box.', 'person puts it in a box.'],
-    #         'num_sentences': tensor(2),
-    #         'num_targets': tensor([1, 1]),
-    #         'tgt_moments': tensor([[0.1850, 0.4385],
-    #                                [0.1850, 0.4385]]),
-    #         'duration': tensor(29.1900),
-    #         'qids': tensor([0, 0])
-    #     }
-    #     '''
-    #     start_time = 0
-    #     empty_clips = []
-    #     # # sort moments by the starting time
-    #     # sorted_moments = sorted(moments, key=lambda x: x[0])
-    #     # # moments_sorted_idx = sorted(range(len(moments)))
-    #     # sorted_moments_idx = sorted(range(len(moments)), key=lambda k: moments[k])
-    #     # # find all empty clips in video
-    #     # for moment in sorted_moments:
-    #     #     if (moment[0] - start_time) > 0:
-    #     #         empty_clips.append([start_time, moment[0]])
-    #     #     start_time = moment[1]
-    #     # if (duration - start_time) > 0:
-    #     #     empty_clips.append([start_time, duration])
-    #     # empty_clips_len = [clip[1] - clip[0] for clip in empty_clips]
+    def augmentation(self, anno, video_feats):
+        """Do multi positive augmentation"""
+        '''
+        anno: {
+            'vid': 'FLDHS',
+            'sentences': ['person are putting stuff in a box.', 'person puts it in a box.'],
+            'num_sentences': tensor(2),
+            'num_targets': tensor([1, 1]),
+            'tgt_moments': tensor([[0.1850, 0.4385],
+                                   [0.1850, 0.4385]]),
+            'duration': tensor(29.1900),
+            'qids': tensor([0, 0])
+        }
+        video_feats: [num_sent, seq_len, feat_dim]
+        '''
+        shift_t = 0
+        new_num_targets = []
+        new_tgt_moments = []
+        for idx, num_target in enumerate(anno['num_targets']):
+            # 50% chance to do augmentation for each query-moments sample pair
+            if random.random() > 0.5:
+                new_num_targets.append(num_target)
+                new_tgt_moments.append(anno['tgt_moments'][shift_t:shift_t + num_target])
+                shift_t += num_target
+                continue
 
-    #     # # random choose one moment to do augmentation
-    #     # moment_idx = random.choice(range(len(sorted_moments)))
-    #     # moment = sorted_moments[moment_idx]
-    #     # moment_len = moment[1] - moment[0]
-    #     # # enlarge moment len to include some background on boundary
-    #     # moment_len = moment_len * 1.2
-    #     # possible_start_index = []
-    #     # for empty_clip, empty_clip_len in zip(empty_clips, empty_clips_len):
-    #     #     if moment_len < empty_clip_len:
-    #     #         for start_time in np.arange(empty_clip[0], empty_clip[1] - moment_len, 0.5):
-    #     #             possible_start_index.append(start_time)
+            tgt_moments = anno['tgt_moments'][shift_t:shift_t + num_target]     # [num_target, 2]
+            # sort moments by the starting time
+            sorted_moments = sorted(tgt_moments, key=lambda x: x[0])
+            # find all empty clips in video
+            empty_clips = []
+            start_time = torch.tensor(0.0)
+            for moment in sorted_moments:
+                if (moment[0] - start_time) > 0:
+                    empty_clips.append([start_time, moment[0]])
+                start_time = moment[1]
+            # ending empty clip
+            if (torch.tensor(1.0) - start_time) > 0.0001:
+                empty_clips.append([start_time, torch.tensor(1.0)])
+            empty_clips_len = torch.tensor(([clip[1] - clip[0] for clip in empty_clips]))
 
-    #     # # sample from the all possible start index to do augmentation
-    #     # aug_start = random.choice(possible_start_index)
-    #     # aug_end = aug_start + moment_len
+            # no place to do augmentation
+            if len(empty_clips_len) == 0:
+                new_num_targets.append(num_target)
+                new_tgt_moments.append(anno['tgt_moments'][shift_t:shift_t + num_target])
+                shift_t += num_target
+                continue
 
-    #     # # update anno
-    #     # original_moment_idx = sorted_moments_idx[moment_idx]
-    #     # anno['tgt_moments'] = torch.cat(anno['tgt_moments'], [aug_start, aug_end])
-    #     # anno['num_targets'] += 1
+            # downsample = random.random() > 0.5
+            downsample = False
+            if downsample:
+                mask = [(empty_clips_len > (tgt_moment[1] - tgt_moment[0]) * self.aug_expand_rate / 2).any()
+                        for tgt_moment in tgt_moments]
+                mask = torch.tensor(mask).float()
+                # check if any target can do augmentation
+                if (mask > 0).any():
+                    # sample one target to do augmentation
+                    do_aug_target_idx = torch.multinomial(mask, 1, replacement=False)
+                    do_aug_target_moment = tgt_moments[do_aug_target_idx].squeeze()
+                    do_aug_target_len = do_aug_target_moment[1] - do_aug_target_moment[0]
+                    # final aug target len
+                    final_aug_target_len = (do_aug_target_len * self.aug_expand_rate) / 2
+                    # find all available augmentation timestamp
+                    possible_start_time = []
+                    for empty_clip, empty_clip_len in zip(empty_clips, empty_clips_len):
+                        if final_aug_target_len < empty_clip_len:
+                            for start_time in np.arange(
+                                empty_clip[0],
+                                empty_clip[1] - final_aug_target_len - 0.02,
+                                0.02
+                            ):
+                                possible_start_time.append(torch.tensor(start_time, dtype=torch.float32))
+                    # check for empty possible_start_time
+                    if len(possible_start_time) == 0:
+                        new_num_targets.append(num_target)
+                        new_tgt_moments.append(anno['tgt_moments'][shift_t:shift_t + num_target])
+                        shift_t += num_target
+                        continue
 
-    #     # # do mixup
-    #     # alpha = 0.9
-    #     # seq_len = video_feats.shape[0]
-    #     # target_seq_start_idx = int(seq_len * moment[0])
-    #     # target_seq_end_idx = int(seq_len * moment[1])
-    #     # target_feat = video_feats[target_seq_start_idx:target_seq_end_idx]
+                    # sample from the all possible start index to do augmentation
+                    aug_start = random.choice(possible_start_time)
+                    aug_end = aug_start + final_aug_target_len
 
-    #     # aug_seq_start_idx = int(seq_len * aug_start)
-    #     # aug_seq_end_idx = int(seq_len * aug_end)
-    #     # assert (target_seq_end_idx - target_seq_start_idx) == \
-    #     #     (aug_seq_end_idx - aug_seq_start_idx)
-    #     # video_feats[aug_seq_start_idx: aug_seq_end_idx] = \
-    #     #     target_feat * alpha + \
-    #     #     video_feats[aug_seq_start_idx: aug_seq_end_idx] * (1 - alpha)
+                    # Do video_feat mixup
+                    seq_len = video_feats[idx].shape[-2]
+                    # target
+                    target_seq_start_idx = int(seq_len * (do_aug_target_moment[0] - (self.aug_expand_rate - 1) / 2 * do_aug_target_len))
+                    target_seq_start_idx = max(0, min(target_seq_start_idx, seq_len - 1))
+                    target_seq_end_idx = int(seq_len * (do_aug_target_moment[1] + (self.aug_expand_rate - 1) / 2 * do_aug_target_len))
+                    target_seq_end_idx = max(1, min(target_seq_end_idx, seq_len))
+                    target_seq_len = target_seq_end_idx - target_seq_start_idx
 
-    #     return anno, video_feats
+                    # aug: len = target_len / 2 for even seq_len number
+                    aug_seq_start_idx = int(seq_len * aug_start)
+                    aug_seq_start_idx = max(0, min(aug_seq_start_idx, seq_len - 1))
+                    aug_seq_end_idx = int(seq_len * aug_end)
+                    aug_seq_end_idx = max(1, min(aug_seq_end_idx, seq_len))
+                    aug_seq_len = aug_seq_end_idx - aug_seq_start_idx
+
+                    final_seq_len = min(target_seq_len, aug_seq_len)
+
+                    # self.downsample will return ceil(seq / 2)
+                    # make sure the aug_seq_len = ceil(target_seq_len / 2)
+                    if aug_seq_len != math.ceil(target_seq_len / 2):
+                        aug_seq_end_idx = aug_seq_start_idx + math.ceil(target_seq_len / 2)
+                        aug_seq_len = math.ceil(target_seq_len / 2)
+                        # aug_seq_end_idx could possiblily == seq_len?
+                        if aug_seq_end_idx == seq_len:
+                            raise ValueError("Aug seq end idx == seq_len")
+
+                    # mixup
+                    video_feats[idx][aug_seq_start_idx:aug_seq_end_idx] = \
+                        self.downsample(
+                            self.mixup_alpha * video_feats[idx][target_seq_start_idx:target_seq_end_idx],
+                            'avg_pooling',
+                    ) + (1 - self.mixup_alpha) * video_feats[idx][aug_seq_start_idx:aug_seq_end_idx]
+
+                    # update anno (num_targets, tgt_moments) and video_feats
+                    new_num_targets.append(num_target + 1)
+                    new_tgt_moments.append(
+                        torch.cat([tgt_moments, torch.tensor([[aug_start, aug_end]])], dim=0)
+                    )
+                    shift_t += num_target
+
+                else:   # do augmentation but no proper empty clip
+                    # print(f"do augmentation but no proper empty clip, {empty_clips}, {empty_clips_len}", flush=True)
+                    # print(f"{empty_clips[-1][0].dtype, empty_clips[-1][1].dtype}", flush=True)
+                    new_num_targets.append(num_target)
+                    new_tgt_moments.append(anno['tgt_moments'][shift_t:shift_t + num_target])
+                    shift_t += num_target
+
+            else:   # not downsample
+                mask = [(empty_clips_len > (tgt_moment[1] - tgt_moment[0]) * self.aug_expand_rate).any()
+                        for tgt_moment in tgt_moments]
+                mask = torch.tensor(mask).float()     # [0, 1, 0, ...]
+
+                # check if any target can do augmentation
+                if (mask > 0).any():
+                    # sample one target to do augmentation
+                    do_aug_target_idx = torch.multinomial(mask, 1, replacement=False)
+                    do_aug_target_moment = tgt_moments[do_aug_target_idx].squeeze()
+                    do_aug_target_len = do_aug_target_moment[1] - do_aug_target_moment[0]
+                    final_aug_target_len = (do_aug_target_len * self.aug_expand_rate)
+                    # find all available augmentation timestamp
+                    possible_start_time = []
+                    for empty_clip, empty_clip_len in zip(empty_clips, empty_clips_len):
+                        if final_aug_target_len < empty_clip_len:
+                            for start_time in np.arange(
+                                empty_clip[0],
+                                empty_clip[1] - final_aug_target_len,
+                                0.02
+                            ):
+                                possible_start_time.append(torch.tensor(start_time, dtype=torch.float32))
+                    # check for empty possible_start_time
+                    if len(possible_start_time) == 0:
+                        new_num_targets.append(num_target)
+                        new_tgt_moments.append(anno['tgt_moments'][shift_t:shift_t + num_target])
+                        shift_t += num_target
+                        continue
+
+                    # sample from the all possible start index to do augmentation
+                    aug_start = random.choice(possible_start_time)
+                    aug_end = aug_start + final_aug_target_len
+
+                    # Do video_feat mixup
+                    seq_len = video_feats[idx].shape[-2]
+                    # target
+                    target_seq_start_idx = int(seq_len * (do_aug_target_moment[0] - (self.aug_expand_rate - 1) / 2 * do_aug_target_len))
+                    target_seq_start_idx = max(0, min(target_seq_start_idx, seq_len - 1))
+                    target_seq_end_idx = int(seq_len * (do_aug_target_moment[1] + (self.aug_expand_rate - 1) / 2 * do_aug_target_len))
+                    target_seq_end_idx = max(1, min(target_seq_end_idx, seq_len))
+                    target_seq_len = target_seq_end_idx - target_seq_start_idx
+
+                    # aug
+                    aug_seq_start_idx = int(seq_len * aug_start)
+                    aug_seq_start_idx = max(0, min(aug_seq_start_idx, seq_len - 1))
+                    aug_seq_end_idx = aug_seq_start_idx + target_seq_len
+                    aug_seq_end_idx = max(1, min(aug_seq_end_idx, seq_len))
+                    aug_seq_len = aug_seq_end_idx - aug_seq_start_idx
+
+                    final_seq_len = min(target_seq_len, aug_seq_len)
+                    # make sure the length is the same
+                    if target_seq_len > final_seq_len:
+                        target_seq_end_idx = target_seq_start_idx + final_seq_len
+                    elif aug_seq_len > final_seq_len:
+                        aug_seq_end_idx = aug_seq_start_idx + final_seq_len
+                    assert (aug_seq_end_idx - aug_seq_start_idx) == (target_seq_end_idx - target_seq_start_idx)
+
+                    video_feats[idx][aug_seq_start_idx:aug_seq_end_idx] = \
+                        self.mixup_alpha * video_feats[idx][target_seq_start_idx:target_seq_end_idx] \
+                        + (1 - self.mixup_alpha) * video_feats[idx][aug_seq_start_idx:aug_seq_end_idx]
+
+                    # update anno (num_targets, tgt_moments) and video_feats
+                    new_num_targets.append(num_target + 1)
+                    new_tgt_moments.append(
+                        torch.cat([tgt_moments, torch.tensor([[aug_start, aug_end]])], dim=0)
+                    )
+                    shift_t += num_target
+
+                else:   # do augmentation but no proper empty clip
+                    # print(f"do augmentation but no proper empty clip, {empty_clips}, {empty_clips_len}", flush=True)
+                    # print(f"{empty_clips[-1][0].dtype, empty_clips[-1][1].dtype}", flush=True)
+                    new_num_targets.append(num_target)
+                    new_tgt_moments.append(anno['tgt_moments'][shift_t:shift_t + num_target])
+                    shift_t += num_target
+
+        # update annotation
+        anno['num_targets'] = torch.tensor(new_num_targets)
+        anno['tgt_moments'] = torch.cat(new_tgt_moments, dim=0)
+
+        return anno, video_feats
 
     def __len__(self):
         return len(self.annos)
@@ -175,12 +353,12 @@ class CollateBase(torch.utils.data.Dataset):
         anno = self.annos[idx]
         video_feats = self.get_feat(anno)   # [seq_len, dim]
         # duplicate video feats for each query, anno['num_sentences'] times
-        video_feats = video_feats.unsqueeze(0).repeat(anno['num_sentences'], 1, 1)
+        video_feats = video_feats.unsqueeze(0).repeat(
+            anno['num_sentences'], 1, 1
+        )                                    # [num_sent, seq_len, feat_dim]
 
-        # 50% do video feature-level augmentation
-        # if random.random() > 0.5:
-        #     anno, video_feats = self.augmentation(anno, video_feats)
-        # anno, video_feats = self.augmentation(anno, video_feats)
+        if self.do_augmentation:
+            anno, video_feats = self.augmentation(anno, video_feats)
 
         return {
             'idx': torch.ones(anno['num_sentences'], dtype=torch.long) * idx,

@@ -37,11 +37,13 @@
     "intra_t": 0.0,
     "intra_m": 0.0,
     "intra_weight": 0,
+    "do_augmentation": false,
 
     "start_dns_epoch": 999,
 
     "epochs": 12,
-    "batch_size": 48,
+    "batch_size": 24,
+    "test_batch_size": 24,
     "base_lr": 8e-4,
     "bert_lr": 8e-5,
     "milestones": [7, 15],

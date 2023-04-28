@@ -38,6 +38,7 @@
     "intra_t": 0.1,
     "intra_m": 0.0,
     "intra_weight": 0.0,
+    "do_augmentation": false,
 
     "epochs": 12,
     "batch_size": 48,

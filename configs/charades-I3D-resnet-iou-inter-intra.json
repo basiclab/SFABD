@@ -38,7 +38,9 @@
     "intra_t": 0.1,
     "intra_m": 0.0,
     "intra_weight": 0.01,
+    "do_augmentation": true,
     "mixup_alpha": 0.9,
+    "aug_expand_rate": 1.0,
 
     "inter_query_threshold": 0.7,
     "intra_video_threshold": 0.9,

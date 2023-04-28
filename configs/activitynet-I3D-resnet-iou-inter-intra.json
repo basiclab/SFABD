@@ -2,7 +2,7 @@
     "num_init_clips": 128,
     "num_clips": 64,
     "TrainDataset": "src.datasets.activitynet.ActivityNetI3DTrain",
-    "ValDataset": "src.datasets.activitynet.ActivityNetC3DVal",
+    "ValDataset": "src.datasets.activitynet.ActivityNetI3DVal",
     "TestDataset": "src.datasets.activitynet.ActivityNetI3DTest",
     "MultiTestDataset": "src.datasets.activitynet.ActivityNetI3DMultiTest",
 
@@ -38,11 +38,15 @@
     "intra_t": 0.1,
     "intra_m": 0.0,
     "intra_weight": 0.1,
+    "do_augmentation": true,
+    "mixup_alpha": 0.9,
+    "aug_expand_rate": 1.0,
 
     "start_dns_epoch": 999,
 
     "epochs": 10,
     "batch_size": 24,
+    "test_batch_size": 24,
     "base_lr": 1e-3,
     "bert_lr": 1e-5,
     "milestones": [8, 15],

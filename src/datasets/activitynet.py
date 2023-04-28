@@ -14,10 +14,18 @@ from src import dist
 class ActivityNetC3D(CollateBase):
     def __init__(
         self,
+        do_augmentation,
+        mixup_alpha,
+        aug_expand_rate,
         ann_file,
         feat_file='./data/ActivityNet/C3D/activitynet_v1-3_c3d.hdf5'
     ):
-        super().__init__(ann_file)
+        super().__init__(
+            ann_file,
+            do_augmentation,
+            mixup_alpha,
+            aug_expand_rate,
+        )
         self.feat_file = feat_file
 
     def get_feat_dim(self):
@@ -33,32 +41,65 @@ class ActivityNetC3D(CollateBase):
 
 
 class ActivityNetC3DTrain(ActivityNetC3D):
-    def __init__(self):
-        super().__init__(ann_file='./data/ActivityNet/train.json')
+    def __init__(
+        self,
+        do_augmentation=True,
+        mixup_alpha=0.9,
+        aug_expand_rate=1.0,
+    ):
+        super().__init__(
+            do_augmentation,
+            mixup_alpha=mixup_alpha,
+            aug_expand_rate=aug_expand_rate,
+            ann_file='./data/ActivityNet/train.json'
+        )
 
 
 class ActivityNetC3DVal(ActivityNetC3D):
     def __init__(self):
-        super().__init__(ann_file='./data/ActivityNet/val.json')
+        super().__init__(
+            do_augmentation=False,
+            mixup_alpha=0.0,
+            aug_expand_rate=0.0,
+            ann_file='./data/ActivityNet/val.json'
+        )
 
 
 class ActivityNetC3DTest(ActivityNetC3D):
     def __init__(self):
-        super().__init__(ann_file='./data/ActivityNet/test.json')
+        super().__init__(
+            do_augmentation=False,
+            mixup_alpha=0.0,
+            aug_expand_rate=0.0,
+            ann_file='./data/ActivityNet/test.json'
+        )
 
 
 class ActivityNetC3DMultiTest(ActivityNetC3D):
     def __init__(self):
-        super().__init__(ann_file='./data/ActivityNet/multi_test.json')
+        super().__init__(
+            do_augmentation=False,
+            mixup_alpha=0.0,
+            aug_expand_rate=0.0,
+            ann_file='./data/ActivityNet/multi_test.json'
+        )
 
 
 class ActivityNetI3D(CollateBase):
     def __init__(
         self,
+        do_augmentation,
+        mixup_alpha,
+        aug_expand_rate,
         ann_file,
         feat_dir="./data/ActivityNet/I3D/"
     ):
-        super().__init__(ann_file)
+        super().__init__(
+            ann_file,
+            do_augmentation,
+            mixup_alpha,
+            aug_expand_rate,
+        )
         self.feat_dir = feat_dir
 
     def get_feat_dim(self):
@@ -75,24 +116,45 @@ class ActivityNetI3D(CollateBase):
 
 
 class ActivityNetI3DTrain(ActivityNetI3D):
-    def __init__(self):
+    def __init__(
+        self,
+        do_augmentation=True,
+        mixup_alpha=0.9,
+        aug_expand_rate=1.0,
+    ):
         super().__init__(
-            ann_file='./data/ActivityNet/train.json')
+            do_augmentation,
+            mixup_alpha,
+            aug_expand_rate,
+            ann_file='./data/ActivityNet/train.json'
+        )
 
 
 class ActivityNetI3DVal(ActivityNetI3D):
     def __init__(self):
         super().__init__(
-            ann_file='./data/ActivityNet/val.json')
+            do_augmentation=False,
+            mixup_alpha=0.0,
+            aug_expand_rate=0.0,
+            ann_file='./data/ActivityNet/val.json'
+        )
 
 
 class ActivityNetI3DTest(ActivityNetI3D):
     def __init__(self):
         super().__init__(
-            ann_file='./data/ActivityNet/test.json')
+            do_augmentation=False,
+            mixup_alpha=0.0,
+            aug_expand_rate=0.0,
+            ann_file='./data/ActivityNet/test.json'
+        )
 
 
 class ActivityNetI3DMultiTest(ActivityNetI3D):
     def __init__(self):
         super().__init__(
-            ann_file='./data/ActivityNet/multi_test.json')
+            do_augmentation=False,
+            mixup_alpha=0.0,
+            aug_expand_rate=0.0,
+            ann_file='./data/ActivityNet/multi_test.json'
+        )

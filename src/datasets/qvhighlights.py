@@ -10,10 +10,18 @@ from src.datasets.base import CollateBase
 class QVHighlights(CollateBase):
     def __init__(
         self,
+        do_augmentation,
+        mixup_alpha,
+        aug_expand_rate,
         ann_file,               # path to annotation file (.json)
         feat_dirs,              # path to feature directories
     ):
-        super().__init__(ann_file)
+        super().__init__(
+            ann_file,
+            do_augmentation,
+            mixup_alpha,
+            aug_expand_rate,
+        )
         self.feat_dirs = feat_dirs
 
     def get_feat_dim(self):
@@ -35,10 +43,18 @@ class QVHighlights(CollateBase):
         return feats
 
 
-class QVHighlights(QVHighlights):
-    def __init__(self, ann_file):
+class QVHighlightsTrain(QVHighlights):
+    def __init__(
+        self,
+        do_augmentation=True,
+        mixup_alpha=0.9,
+        aug_expand_rate=1.0,
+    ):
         super().__init__(
-            ann_file,
+            do_augmentation,
+            mixup_alpha,
+            aug_expand_rate,
+            ann_file="./data/QVHighlights/train.json",
             feat_dirs=[
                 './data/QVHighlights/features/clip_features/',
                 './data/QVHighlights/features/slowfast_features/',
@@ -46,16 +62,29 @@ class QVHighlights(QVHighlights):
         )
 
 
-class QVHighlightsTrain(QVHighlights):
-    def __init__(self):
-        super().__init__(ann_file="./data/QVHighlights/train.json")
-
-
 class QVHighlightsVal(QVHighlights):
     def __init__(self):
-        super().__init__(ann_file="./data/QVHighlights/val.json")
+        super().__init__(
+            do_augmentation=False,
+            mixup_alpha=0.0,
+            aug_expand_rate=0.0,
+            ann_file="./data/QVHighlights/val.json",
+            feat_dirs=[
+                './data/QVHighlights/features/clip_features/',
+                './data/QVHighlights/features/slowfast_features/',
+            ]
+        )
 
 
 class QVHighlightsTest(QVHighlights):
     def __init__(self):
-        super().__init__(ann_file="./data/QVHighlights/test.json")
+        super().__init__(
+            do_augmentation=False,
+            mixup_alpha=0.0,
+            aug_expand_rate=0.0,
+            ann_file="./data/QVHighlights/test.json",
+            feat_dirs=[
+                './data/QVHighlights/features/clip_features/',
+                './data/QVHighlights/features/slowfast_features/',
+            ]
+        )
