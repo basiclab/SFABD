@@ -58,7 +58,7 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--intra_t', default=0.1, help='temperature for intra contrastive loss')
 @click.option('--intra_m', default=0.0, help='margin for inter contrastive loss')
 @click.option('--intra_weight', default=0.1)
-@click.option('--do_augmentation', default=False)
+@click.option('--do_augmentation/--no-do_augmentation', default=False)
 @click.option('--mixup_alpha', default=0.9)
 @click.option('--aug_expand_rate', default=1.2)
 # Dynamic Negative Sampling
