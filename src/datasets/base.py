@@ -101,7 +101,7 @@ class CollateBase(torch.utils.data.Dataset):
         elif method == 'avg_pooling':
             video_feats = F.avg_pool1d(video_feats.t(), 2, 2, ceil_mode=True).t()   # [ceil(seq_len / 2), feat_dim]
 
-        # might be useless because we use MMN? 
+        # might be useless because we use MMN?
         elif method == 'max_pooling':
             video_feats = F.max_pool1d(video_feats.t(), 2, 2, ceil_mode=True).t()   # [ceil(seq_len / 2), feat_dim]
 
@@ -283,7 +283,7 @@ class CollateBase(torch.utils.data.Dataset):
                     seq_len = video_feats[idx].shape[-2]
                     # target
                     target_seq_start_idx = int(seq_len * (do_aug_target_moment[0] - (self.aug_expand_rate - 1) / 2 * do_aug_target_len))
-                    target_seq_start_idx = max(0, min(target_seq_start_idx, seq_len - 1-2))
+                    target_seq_start_idx = max(0, min(target_seq_start_idx, seq_len - 2))
                     target_seq_end_idx = int(seq_len * (do_aug_target_moment[1] + (self.aug_expand_rate - 1) / 2 * do_aug_target_len))
                     target_seq_end_idx = max(1, min(target_seq_end_idx, seq_len - 1))
                     target_seq_len = target_seq_end_idx - target_seq_start_idx
