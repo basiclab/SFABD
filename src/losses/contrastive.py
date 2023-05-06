@@ -243,12 +243,25 @@ class IntraContrastiveLoss(LogCrossEntropy):
         combinations = []
         scatter_e2s = []
         for i, num in enumerate(num_targets):
-            # only for multi-target samples
-            if num > 0:
-                pairs = torch.ones(
-                    num * K, num * K, device=device).nonzero()  # [num * K * num * K, 2]
+            # if num > 0:
+            #     # use trivial pos pair
+            #     pairs = torch.ones(
+            #         num * K, num * K, device=device).nonzero()  # [num * K * num * K, 2]
+            #     combinations.append(pairs + shift)
+            #     scatter_e2s.append(torch.ones(len(pairs), device=device) * i)
+
+            # only for multi-target samples if num > 1:
+            if num > 1:
+                # use trivial pos pair
+                # pairs = torch.ones(
+                #     num * K, num * K, device=device).nonzero()  # [num * K * num * K, 2]
+                # don't use trivial pos pair
+                pairs = torch.ones(num * K, num * K, device=device)   # [num * K, num * K]
+                trivial_pair_mask = 1 - torch.eye(num * K, device=device)
+                pairs = (pairs * trivial_pair_mask).nonzero()         # [num * K * num * K, 2]
                 combinations.append(pairs + shift)
                 scatter_e2s.append(torch.ones(len(pairs), device=device) * i)
+
             shift += num * K
 
         # E: number of (E)numerated positive pairs

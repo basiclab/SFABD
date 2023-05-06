@@ -19,6 +19,9 @@ class CollateBase(torch.utils.data.Dataset):
         do_augmentation=False,
         mixup_alpha=0.9,
         aug_expand_rate=1.0,
+        downsampling_method='odd',
+        aug_prob=0.75,
+        downsampling_prob=0.5,
     ):
         self.tokenizer = DistilBertTokenizer.from_pretrained(
             "distilbert-base-uncased")
@@ -26,6 +29,9 @@ class CollateBase(torch.utils.data.Dataset):
         self.do_augmentation = do_augmentation
         self.mixup_alpha = mixup_alpha
         self.aug_expand_rate = aug_expand_rate
+        self.downsampling_method = downsampling_method
+        self.aug_prob = aug_prob
+        self.downsampling_prob = downsampling_prob
 
     def get_feat(self, anno):
         """Get video features for a single video"""
@@ -50,7 +56,7 @@ class CollateBase(torch.utils.data.Dataset):
             num_targets = []
             qids = []
             # TODO: sample at most k samples to prevent large VRAM usage
-            k = 5
+            k = 7
             if len(video_data['annotations']) > k:
                 sampled_annos = random.sample(video_data['annotations'], k)
             else:
@@ -105,10 +111,14 @@ class CollateBase(torch.utils.data.Dataset):
         elif method == 'max_pooling':
             video_feats = F.max_pool1d(video_feats.t(), 2, 2, ceil_mode=True).t()   # [ceil(seq_len / 2), feat_dim]
 
+        elif method == 'None':
+            pass
+
         else:
             raise ValueError(f"Unknown downsampling method {method}")
 
         return video_feats
+
     # def augmentation(self, anno, video_feats):
     #     """Do multi positive augmentation"""
     #     raise NotImplementedError
@@ -132,8 +142,9 @@ class CollateBase(torch.utils.data.Dataset):
         new_num_targets = []
         new_tgt_moments = []
         for idx, num_target in enumerate(anno['num_targets']):
-            # 75% chance to do augmentation for each query-moments sample pair
-            if random.random() < 0.75:
+            # x% chance to do augmentation for each query-moments sample pair
+            # 1 - x% to not do augmentation
+            if random.random() > self.aug_prob:  # ex. if aug_prob = 75%, then 25% not do augmentation
                 new_num_targets.append(num_target)
                 new_tgt_moments.append(anno['tgt_moments'][shift_t:shift_t + num_target])
                 shift_t += num_target
@@ -160,9 +171,8 @@ class CollateBase(torch.utils.data.Dataset):
                 shift_t += num_target
                 continue
 
-            downsample = random.random() < 0.5
-            # downsample = False
-            if downsample:
+            # x% do downsampling
+            if random.random() < self.downsampling_prob:
                 mask = [(empty_clips_len > (tgt_moment[1] - tgt_moment[0]) * self.aug_expand_rate / 2).any()
                         for tgt_moment in tgt_moments]
                 mask = torch.tensor(mask).float()
@@ -222,10 +232,9 @@ class CollateBase(torch.utils.data.Dataset):
                             raise ValueError("Aug seq end idx == seq_len")
 
                     # mixup
-                    downsample_method = 'odd'
                     mixup_feat = self.downsample(
                         self.mixup_alpha * video_feats[idx][target_seq_start_idx:target_seq_end_idx],
-                        downsample_method,
+                        self.downsampling_method,
                     ) + (1 - self.mixup_alpha) * video_feats[idx][aug_seq_start_idx:aug_seq_end_idx]
                     # Normalize for cosine similarity
                     video_feats[idx][aug_seq_start_idx:aug_seq_end_idx] = F.normalize(mixup_feat.contiguous(), dim=-1)
@@ -240,8 +249,6 @@ class CollateBase(torch.utils.data.Dataset):
                     shift_t += num_target
 
                 else:   # do augmentation but no proper empty clip
-                    # print(f"do augmentation but no proper empty clip, {empty_clips}, {empty_clips_len}", flush=True)
-                    # print(f"{empty_clips[-1][0].dtype, empty_clips[-1][1].dtype}", flush=True)
                     new_num_targets.append(num_target)
                     new_tgt_moments.append(anno['tgt_moments'][shift_t:shift_t + num_target])
                     shift_t += num_target

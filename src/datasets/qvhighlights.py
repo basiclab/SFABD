@@ -13,6 +13,9 @@ class QVHighlights(CollateBase):
         do_augmentation,
         mixup_alpha,
         aug_expand_rate,
+        downsampling_method,
+        aug_prob,
+        downsampling_prob,
         ann_file,               # path to annotation file (.json)
         feat_dirs,              # path to feature directories
     ):
@@ -21,6 +24,9 @@ class QVHighlights(CollateBase):
             do_augmentation,
             mixup_alpha,
             aug_expand_rate,
+            downsampling_method,
+            aug_prob,
+            downsampling_prob,
         )
         self.feat_dirs = feat_dirs
 
@@ -46,14 +52,20 @@ class QVHighlights(CollateBase):
 class QVHighlightsTrain(QVHighlights):
     def __init__(
         self,
-        do_augmentation=True,
+        do_augmentation=False,
         mixup_alpha=0.9,
         aug_expand_rate=1.0,
+        downsampling_method='odd',
+        aug_prob=0.5,
+        downsampling_prob=0.5,
     ):
         super().__init__(
             do_augmentation,
             mixup_alpha,
             aug_expand_rate,
+            downsampling_method,
+            aug_prob,
+            downsampling_prob,
             ann_file="./data/QVHighlights/train.json",
             feat_dirs=[
                 './data/QVHighlights/features/clip_features/',
@@ -68,6 +80,9 @@ class QVHighlightsVal(QVHighlights):
             do_augmentation=False,
             mixup_alpha=0.0,
             aug_expand_rate=0.0,
+            downsampling_method='None',
+            aug_prob=0.0,
+            downsampling_prob=0.0,
             ann_file="./data/QVHighlights/val.json",
             feat_dirs=[
                 './data/QVHighlights/features/clip_features/',
@@ -82,6 +97,9 @@ class QVHighlightsTest(QVHighlights):
             do_augmentation=False,
             mixup_alpha=0.0,
             aug_expand_rate=0.0,
+            downsampling_method='None',
+            aug_prob=0.0,
+            downsampling_prob=0.0,
             ann_file="./data/QVHighlights/test.json",
             feat_dirs=[
                 './data/QVHighlights/features/clip_features/',

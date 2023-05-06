@@ -15,6 +15,9 @@ class CharadesVGG(CollateBase):
         do_augmentation,
         mixup_alpha,
         aug_expand_rate,
+        downsampling_method,
+        aug_prob,
+        downsampling_prob,
         ann_file,           # path to annotation file (.json)
         feat_file,          # path to feature file
     ):
@@ -23,6 +26,9 @@ class CharadesVGG(CollateBase):
             do_augmentation,
             mixup_alpha,
             aug_expand_rate,
+            downsampling_method,
+            aug_prob,
+            downsampling_prob,
         )
         self.feat_file = feat_file
 
@@ -41,14 +47,20 @@ class CharadesVGG(CollateBase):
 class CharadesSTAVGGTrain(CharadesVGG):
     def __init__(
         self,
-        do_augmentation=True,
+        do_augmentation=False,
         mixup_alpha=0.9,
         aug_expand_rate=1.0,
+        downsampling_method='odd',
+        aug_prob=0.5,
+        downsampling_prob=0.5,
     ):
         super().__init__(
             do_augmentation,
             mixup_alpha,
             aug_expand_rate,
+            downsampling_method,
+            aug_prob,
+            downsampling_prob,
             ann_file="./data/CharadesSTA/train.json",
             feat_file="./data/CharadesSTA/VGG/vgg_rgb_features.hdf5",
         )
@@ -60,6 +72,9 @@ class CharadesSTAVGGTest(CharadesVGG):
             do_augmentation=False,
             mixup_alpha=0.0,
             aug_expand_rate=0.0,
+            downsampling_method='None',
+            aug_prob=0.0,
+            downsampling_prob=0.0,
             ann_file="./data/CharadesSTA/test.json",
             feat_file="./data/CharadesSTA/VGG/vgg_rgb_features.hdf5",
         )
@@ -71,6 +86,9 @@ class CharadesSTAVGGMultiTest(CharadesVGG):
             do_augmentation=False,
             mixup_alpha=0.0,
             aug_expand_rate=0.0,
+            downsampling_method='None',
+            aug_prob=0.0,
+            downsampling_prob=0.0,
             ann_file="./data/CharadesSTA/multi_test.json",
             feat_file="./data/CharadesSTA/VGG/vgg_rgb_features.hdf5",
         )
@@ -82,14 +100,20 @@ class CharadesI3D(CollateBase):
         do_augmentation,
         mixup_alpha,
         aug_expand_rate,
+        downsampling_method,
+        aug_prob,
+        downsampling_prob,
         ann_file,           # path to annotation file (.json)
-        feat_dir,          # path to feature file
+        feat_dir,           # path to feature file
     ):
         super().__init__(
             ann_file,
             do_augmentation,
             mixup_alpha,
             aug_expand_rate,
+            downsampling_method,
+            aug_prob,
+            downsampling_prob,
         )
         self.feat_dir = feat_dir
 
@@ -110,14 +134,20 @@ class CharadesI3D(CollateBase):
 class CharadesSTAI3DTrain(CharadesI3D):
     def __init__(
         self,
-        do_augmentation=True,
+        do_augmentation=False,
         mixup_alpha=0.9,
         aug_expand_rate=1.0,
+        downsampling_method='odd',
+        aug_prob=0.5,
+        downsampling_prob=0.5,
     ):
         super().__init__(
             do_augmentation,
             mixup_alpha,
             aug_expand_rate,
+            downsampling_method,
+            aug_prob,
+            downsampling_prob,
             ann_file="./data/CharadesSTA/train.json",
             feat_dir="./data/CharadesSTA/I3D/features/",
         )
@@ -129,6 +159,9 @@ class CharadesSTAI3DTest(CharadesI3D):
             do_augmentation=False,
             mixup_alpha=0.0,
             aug_expand_rate=0.0,
+            downsampling_method='None',
+            aug_prob=0.0,
+            downsampling_prob=0.0,
             ann_file="./data/CharadesSTA/test.json",
             feat_dir="./data/CharadesSTA/I3D/features/",
         )
@@ -140,6 +173,9 @@ class CharadesSTAI3DMultiTest(CharadesI3D):
             do_augmentation=False,
             mixup_alpha=0.0,
             aug_expand_rate=0.0,
+            downsampling_method='None',
+            aug_prob=0.0,
+            downsampling_prob=0.0,
             ann_file="./data/CharadesSTA/multi_test.json",
             feat_dir="./data/CharadesSTA/I3D/features/",
         )

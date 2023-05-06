@@ -17,6 +17,9 @@ class ActivityNetC3D(CollateBase):
         do_augmentation,
         mixup_alpha,
         aug_expand_rate,
+        downsampling_method,
+        aug_prob,
+        downsampling_prob,
         ann_file,
         feat_file='./data/ActivityNet/C3D/activitynet_v1-3_c3d.hdf5'
     ):
@@ -25,6 +28,9 @@ class ActivityNetC3D(CollateBase):
             do_augmentation,
             mixup_alpha,
             aug_expand_rate,
+            downsampling_method,
+            aug_prob,
+            downsampling_prob,
         )
         self.feat_file = feat_file
 
@@ -43,14 +49,20 @@ class ActivityNetC3D(CollateBase):
 class ActivityNetC3DTrain(ActivityNetC3D):
     def __init__(
         self,
-        do_augmentation=True,
+        do_augmentation=False,
         mixup_alpha=0.9,
         aug_expand_rate=1.0,
+        downsampling_method='odd',
+        aug_prob=0.5,
+        downsampling_prob=0.5,
     ):
         super().__init__(
             do_augmentation,
-            mixup_alpha=mixup_alpha,
-            aug_expand_rate=aug_expand_rate,
+            mixup_alpha,
+            aug_expand_rate,
+            downsampling_method,
+            aug_prob,
+            downsampling_prob,
             ann_file='./data/ActivityNet/train.json'
         )
 
@@ -61,6 +73,9 @@ class ActivityNetC3DVal(ActivityNetC3D):
             do_augmentation=False,
             mixup_alpha=0.0,
             aug_expand_rate=0.0,
+            downsampling_method='None',
+            aug_prob=0.0,
+            downsampling_prob=0.0,
             ann_file='./data/ActivityNet/val.json'
         )
 
@@ -71,6 +86,9 @@ class ActivityNetC3DTest(ActivityNetC3D):
             do_augmentation=False,
             mixup_alpha=0.0,
             aug_expand_rate=0.0,
+            downsampling_method='None',
+            aug_prob=0.0,
+            downsampling_prob=0.0,
             ann_file='./data/ActivityNet/test.json'
         )
 
@@ -81,6 +99,9 @@ class ActivityNetC3DMultiTest(ActivityNetC3D):
             do_augmentation=False,
             mixup_alpha=0.0,
             aug_expand_rate=0.0,
+            downsampling_method='None',
+            aug_prob=0.0,
+            downsampling_prob=0.0,
             ann_file='./data/ActivityNet/multi_test.json'
         )
 
@@ -91,6 +112,9 @@ class ActivityNetI3D(CollateBase):
         do_augmentation,
         mixup_alpha,
         aug_expand_rate,
+        downsampling_method,
+        aug_prob,
+        downsampling_prob,
         ann_file,
         feat_dir="./data/ActivityNet/I3D/"
     ):
@@ -99,6 +123,9 @@ class ActivityNetI3D(CollateBase):
             do_augmentation,
             mixup_alpha,
             aug_expand_rate,
+            downsampling_method,
+            aug_prob,
+            downsampling_prob,
         )
         self.feat_dir = feat_dir
 
@@ -118,14 +145,20 @@ class ActivityNetI3D(CollateBase):
 class ActivityNetI3DTrain(ActivityNetI3D):
     def __init__(
         self,
-        do_augmentation=True,
+        do_augmentation=False,
         mixup_alpha=0.9,
         aug_expand_rate=1.0,
+        downsampling_method='odd',
+        aug_prob=0.5,
+        downsampling_prob=0.5,
     ):
         super().__init__(
             do_augmentation,
             mixup_alpha,
             aug_expand_rate,
+            downsampling_method,
+            aug_prob,
+            downsampling_prob,
             ann_file='./data/ActivityNet/train.json'
         )
 
@@ -136,6 +169,9 @@ class ActivityNetI3DVal(ActivityNetI3D):
             do_augmentation=False,
             mixup_alpha=0.0,
             aug_expand_rate=0.0,
+            downsampling_method='None',
+            aug_prob=0.0,
+            downsampling_prob=0.0,
             ann_file='./data/ActivityNet/val.json'
         )
 
@@ -146,6 +182,9 @@ class ActivityNetI3DTest(ActivityNetI3D):
             do_augmentation=False,
             mixup_alpha=0.0,
             aug_expand_rate=0.0,
+            downsampling_method='None',
+            aug_prob=0.0,
+            downsampling_prob=0.0,
             ann_file='./data/ActivityNet/test.json'
         )
 
@@ -156,5 +195,8 @@ class ActivityNetI3DMultiTest(ActivityNetI3D):
             do_augmentation=False,
             mixup_alpha=0.0,
             aug_expand_rate=0.0,
+            downsampling_method='None',
+            aug_prob=0.0,
+            downsampling_prob=0.0,
             ann_file='./data/ActivityNet/multi_test.json'
         )

@@ -60,29 +60,29 @@ def test_epoch(
         true_moments_batch = dist.gather_dict(true_moments_batch, to_cpu=True)
         true_moments.append(true_moments_batch)
 
-        batch = {key: value.cpu() for key, value in batch.items()}
-        iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips)          # [M, N, N]
-        iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])                       # [S, N, N], separate to combined
-
-        if epoch > 0:
-            # ploting batch
-            shift = 0
-            for batch_idx, scores2d in enumerate(scores2ds.cpu()):
-                # nms(pred)
-                num_proposals = pred_moments_batch['num_proposals'][batch_idx]
-                nms_moments = pred_moments_batch["out_moments"][shift: shift + num_proposals]  # [num_proposals, 2]
-                nms_moments = (nms_moments * config.num_clips).round().long()
-                if info['idx'][batch_idx] % 200 == 0:
-                    plot_path = os.path.join(
-                        config.logdir,
-                        "plots",
-                        f"{info['idx'][batch_idx]}",
-                        f"epoch_{epoch:02d}.jpg")
-                    if epoch == 1:
-                        os.makedirs(os.path.dirname(plot_path), exist_ok=True)
-                    plot_moments_on_iou2d(
-                        iou2d[batch_idx], scores2d, nms_moments, plot_path)
-                shift = shift + num_proposals
+        # plot prediction
+        # batch = {key: value.cpu() for key, value in batch.items()}
+        # iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips)          # [M, N, N]
+        # iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])                       # [S, N, N], separate to combined
+        # if epoch > 0:
+        #     # ploting batch
+        #     shift = 0
+        #     for batch_idx, scores2d in enumerate(scores2ds.cpu()):
+        #         # nms(pred)
+        #         num_proposals = pred_moments_batch['num_proposals'][batch_idx]
+        #         nms_moments = pred_moments_batch["out_moments"][shift: shift + num_proposals]  # [num_proposals, 2]
+        #         nms_moments = (nms_moments * config.num_clips).round().long()
+        #         if info['idx'][batch_idx] % 200 == 0:
+        #             plot_path = os.path.join(
+        #                 config.logdir,
+        #                 "plots",
+        #                 f"{info['idx'][batch_idx]}",
+        #                 f"epoch_{epoch:02d}.jpg")
+        #             if epoch == 1:
+        #                 os.makedirs(os.path.dirname(plot_path), exist_ok=True)
+        #             plot_moments_on_iou2d(
+        #                 iou2d[batch_idx], scores2d, nms_moments, plot_path)
+        #         shift = shift + num_proposals
 
     return pred_moments, true_moments
 
@@ -101,13 +101,6 @@ def val_epoch(
 
     for batch, info in tqdm(loader, ncols=0, leave=False, desc="Inferencing"):
         batch = {key: value.to(device) for key, value in batch.items()}
-        # print(f"video feats:{batch['video_feats'].shape}")
-        # print(f"video_masks:{batch['video_masks'].shape}")
-        # print(f"sents_tokens:{batch['sents_tokens'].shape}")
-        # print(f"sents_masks:{batch['sents_masks'].shape}")
-        # print(f"num_sentences:{batch['num_sentences'].shape}")
-        # print(f"num_targets:{batch['num_targets'].shape}")
-        # print(f"tgt_moments:{batch['tgt_moments'].shape}")
         # prediciton
         with torch.no_grad():
             *_, scores2ds, mask2d = model(**batch)
@@ -243,7 +236,7 @@ def train_epoch(
 
 
 def training_loop(config: AttrDict):
-    set_seed(config.seed)
+    set_seed(config.seed + dist.get_rank())
     device = dist.get_device()
 
     # train Dataset and DataLoader
@@ -252,6 +245,9 @@ def training_loop(config: AttrDict):
         do_augmentation=config.do_augmentation,
         mixup_alpha=config.mixup_alpha,
         aug_expand_rate=config.aug_expand_rate,
+        downsampling_method=config.downsampling_method,
+        aug_prob=config.aug_prob,
+        downsampling_prob=config.downsampling_prob,
     )
     train_sampler = DistributedSampler(train_dataset, shuffle=True, seed=config.seed)
     train_loader = DataLoader(
@@ -262,16 +258,16 @@ def training_loop(config: AttrDict):
         num_workers=min(torch.get_num_threads(), 8),
     )
 
-    if "activity" in config.TrainDataset:
-        val_dataset = construct_class(config.ValDataset)
-        val_sampler = DistributedSampler(val_dataset, shuffle=False, seed=config.seed)
-        val_loader = DataLoader(
-            dataset=val_dataset,
-            batch_size=config.test_batch_size // dist.get_world_size(),
-            collate_fn=val_dataset.collate_fn,
-            sampler=val_sampler,
-            num_workers=min(torch.get_num_threads(), 8),
-        )
+    # if "activity" in config.TrainDataset:
+    #     val_dataset = construct_class(config.ValDataset)
+    #     val_sampler = DistributedSampler(val_dataset, shuffle=False, seed=config.seed)
+    #     val_loader = DataLoader(
+    #         dataset=val_dataset,
+    #         batch_size=config.test_batch_size // dist.get_world_size(),
+    #         collate_fn=val_dataset.collate_fn,
+    #         sampler=val_sampler,
+    #         num_workers=min(torch.get_num_threads(), 8),
+    #     )
 
     # test Dataset and DataLoader
     test_dataset = construct_class(config.TestDataset)
@@ -398,8 +394,8 @@ def training_loop(config: AttrDict):
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, config.milestones, config.step_gamma)
 
     # val set testing
-    if "activity" in config.TrainDataset:
-        val_pred_moments, val_true_moments = val_epoch(model, val_loader, 0, config)
+    # if "activity" in config.TrainDataset:
+    #     val_pred_moments, val_true_moments = val_epoch(model, val_loader, 0, config)
 
     # evaluate test set
     test_pred_moments, test_true_moments = test_epoch(model, test_loader, 0, config)
@@ -447,13 +443,13 @@ def training_loop(config: AttrDict):
 
         elif "activity" in config.TrainDataset:
             # Val set
-            val_writer = SummaryWriter(os.path.join(config.logdir, "val"))
-            val_recall = calculate_recall(
-                val_pred_moments, val_true_moments,
-                config.recall_Ns, config.recall_IoUs
-            )
-            for name, value in val_recall.items():
-                val_writer.add_scalar(f'recall/{name}', value, 0)
+            # val_writer = SummaryWriter(os.path.join(config.logdir, "val"))
+            # val_recall = calculate_recall(
+            #     val_pred_moments, val_true_moments,
+            #     config.recall_Ns, config.recall_IoUs
+            # )
+            # for name, value in val_recall.items():
+            #     val_writer.add_scalar(f'recall/{name}', value, 0)
 
             # Test set
             test_recall = calculate_recall(
@@ -471,14 +467,14 @@ def training_loop(config: AttrDict):
                 test_writer.add_scalar(f'recall/{name}', value, 0)
 
             # initialize best metrics
-            best_val_recall = val_recall
+            # best_val_recall = val_recall
             best_recall = test_recall
             best_multi_recall = test_multi_recall
 
             # Print to terminal
             print("Epoch 0")
-            print(f"Val set")
-            print_recall(val_recall)
+            # print(f"Val set")
+            # print_recall(val_recall)
             print(f"Test set")
             print_recall(test_recall)
             print(f"Multi test set")
@@ -515,9 +511,9 @@ def training_loop(config: AttrDict):
             loss_iou_fn, loss_inter_fn, loss_intra_fn, epoch, config)
 
         # val
-        if "activity" in config.TrainDataset:
-            val_pred_moments, val_true_moments = val_epoch(
-                model, val_loader, epoch, config)
+        # if "activity" in config.TrainDataset:
+        #     val_pred_moments, val_true_moments = val_epoch(
+        #         model, val_loader, epoch, config)
 
         # test
         test_pred_moments, test_true_moments = test_epoch(
@@ -633,12 +629,12 @@ def training_loop(config: AttrDict):
                     train_writer.add_scalar(f'recall/{name}', value, epoch)
 
                 # Val set
-                val_recall = calculate_recall(
-                    val_pred_moments, val_true_moments,
-                    config.recall_Ns, config.recall_IoUs
-                )
-                for name, value in val_recall.items():
-                    val_writer.add_scalar(f'recall/{name}', value, epoch)
+                # val_recall = calculate_recall(
+                #     val_pred_moments, val_true_moments,
+                #     config.recall_Ns, config.recall_IoUs
+                # )
+                # for name, value in val_recall.items():
+                #     val_writer.add_scalar(f'recall/{name}', value, epoch)
 
                 # Test set
                 test_recall = calculate_recall(
@@ -658,8 +654,8 @@ def training_loop(config: AttrDict):
 
                 # show recall and mAPs in terminal
                 print(f"Epoch {epoch}")
-                print(f"Val set")
-                print_recall(val_recall)
+                # print(f"Val set")
+                # print_recall(val_recall)
 
                 print(f"test set")
                 print_recall(test_recall)
@@ -682,8 +678,9 @@ def training_loop(config: AttrDict):
                     torch.save(state, path)
 
                 # Save best checkpoint
-                if val_recall[config.best_metric] > best_val_recall[config.best_metric]:
-                    best_val_recall = val_recall
+                # if val_recall[config.best_metric] > best_val_recall[config.best_metric]:
+                #     best_val_recall = val_recall
+
                 if test_recall[config.best_metric] > best_recall[config.best_metric]:
                     best_recall = test_recall
                     best_multi_recall = test_multi_recall
@@ -691,8 +688,8 @@ def training_loop(config: AttrDict):
                     torch.save(state, path)
 
                 # log best results
-                for name, value in best_val_recall.items():
-                    val_writer.add_scalar(f'best/{name}', value, epoch)
+                # for name, value in best_val_recall.items():
+                #     val_writer.add_scalar(f'best/{name}', value, epoch)
                 for name, value in best_recall.items():
                     test_writer.add_scalar(f'best/{name}', value, epoch)
                 for name, value in best_multi_recall.items():
@@ -700,7 +697,7 @@ def training_loop(config: AttrDict):
 
                 # flush to disk
                 train_writer.flush()
-                val_writer.flush()
+                # val_writer.flush()
                 test_writer.flush()
 
                 # Write json file
@@ -711,9 +708,9 @@ def training_loop(config: AttrDict):
                         'train': {
                             'recall': train_recall,
                         },
-                        'val': {
-                            'recall': val_recall,
-                        },
+                        # 'val': {
+                        #     'recall': val_recall,
+                        # },
                         'test': {
                             'recall': test_recall,
                             'multi_recall': test_multi_recall,
@@ -789,6 +786,6 @@ def training_loop(config: AttrDict):
 
     if dist.is_main():
         train_writer.close()
-        if "activity" in config.TrainDataset:
-            val_writer.close()
+        # if "activity" in config.TrainDataset:
+        #     val_writer.close()
         test_writer.close()
