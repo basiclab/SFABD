@@ -65,7 +65,10 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--mixup_alpha', default=0.9)
 @click.option('--aug_expand_rate', default=1.2)
 @click.option('--downsampling_method', default="odd", type=str)
+# False Negative Cancellation
+@click.option('--do_fnc', default=False, help='False Negative Cancellation')
 # Dynamic Negative Sampling
+@click.option('--do_dns', default=False, help='Dynamic Negative Sampling')
 @click.option('--inter_query_threshold', default=0.7, help='threshold for finding false negative')
 @click.option('--intra_video_threshold', default=0.9, help='threshold for finding false negative')
 @click.option('--fusion_ratio', default=0.5, help='linear combination ratio of inter_query_sim and intra_video_sim')

@@ -13,7 +13,7 @@
     "conv2d_num_layers": 4,
     "joint_space_size": 256,
     "dual_space": false,
-    "resnet": 50,
+    "resnet": 18,
 
     "IoULoss": "src.losses.iou.ScaledIoULoss",
     "min_iou": 0.5,
@@ -42,7 +42,7 @@
     "intra_weight": 0.0,
     "do_augmentation": false,
 
-    "epochs": 6,
+    "epochs": 8,
     "batch_size": 24,
     "base_lr": 1e-3,
     "bert_lr": 1e-5,

@@ -3,6 +3,7 @@ import os
 from collections import defaultdict
 
 import torch
+import torch.nn.functional as F
 from tensorboardX import SummaryWriter
 from torch import optim
 from torch.nn import SyncBatchNorm
@@ -120,6 +121,121 @@ def val_epoch(
     return pred_moments, true_moments
 
 
+def find_false_negative(
+    video_feats: torch.Tensor,          # [S, C, N, N]
+    sents_feats: torch.Tensor,          # [S, C]
+    num_sentences: torch.Tensor,        # [B]
+    num_targets: torch.Tensor,          # [S]
+    iou2d: torch.Tensor,                # [S, N, N]
+    iou2ds: torch.Tensor,               # [M, N, N]
+    mask2d: torch.Tensor,               # [N, N]
+    config: AttrDict,
+) -> torch.Tensor:                      # [S, B * P]                      
+    S, C, N, _ = video_feats.shape
+    B = num_sentences.shape[0]
+    M = num_targets.sum().cpu().item()
+    P = mask2d.long().sum()
+    K = config.pos_topk
+    device = video_feats.device
+    assert iou2d.shape == (S, N, N), f"{iou2d.shape} != {(S, N, N)}"
+    assert iou2ds.shape == (M, N, N), f"{iou2ds.shape} != {(M, N, N)}"
+    
+    # Choose each sample's first sentence idx for mapping S to B
+    scatter_b2s = []
+    count = 0
+    for num_sentence in num_sentences:
+        scatter_b2s.append(count)
+        count = count + num_sentence.item()
+    scatter_b2s = torch.tensor(scatter_b2s, device=device)          # [B]
+
+    scatter_s2b = torch.arange(B, device=device).long()
+    scatter_s2b = scatter_s2b.repeat_interleave(num_sentences)
+
+    # moment idx -> sentence idx
+    scatter_m2s = torch.arange(S, device=device).long()
+    scatter_m2s = scatter_m2s.repeat_interleave(num_targets)        # [M]
+    
+    video_feats = video_feats.masked_select(mask2d).view(S, C, -1)  # [S, C, P]
+    video_feats = video_feats.permute(0, 2, 1)                      # [S, P, C]
+    iou2d = iou2d.masked_select(mask2d).view(S, -1)                 # [S, P]
+    iou2ds = iou2ds.masked_select(mask2d).view(M, -1)               # [M, P]
+
+    # normalize for cosine similarity
+    video_feats = F.normalize(video_feats.contiguous(), dim=-1)     # [S, P, C]
+    sents_feats = F.normalize(sents_feats.contiguous(), dim=-1)     # [S, C]
+
+    # pos mask for [S, B * P] video proposals
+    pos_mask = torch.eye(B, device=device).bool()           # [B, B]
+    pos_mask = pos_mask.unsqueeze(-1)                       # [B, B, 1]
+    pos_mask = pos_mask.expand(-1, -1, P)                   # [B, B, P]
+    pos_mask = pos_mask.reshape(B, -1)                      # [B, B * P]
+    pos_mask = pos_mask[scatter_s2b]                        # [S, B * P]
+    assert pos_mask.long().sum(dim=-1).eq(P).all()
+    s2v_pos_mask = iou2d > 0.5                              # [S, P]
+    local_mask = pos_mask.clone()                           # [S, B * P]
+    pos_mask[local_mask] = s2v_pos_mask.view(-1)            # [S, B * P]
+    # neg mask for each target, for selecting neg proposals for each target
+    target_inter_query_neg_mask = ~pos_mask[scatter_m2s]    # [M, B * P]
+
+    # === inter video (topk proposal -> all sentences)
+    topk_idxs = iou2ds.topk(K, dim=1)[1]                    # [M, K]
+    topk_idxs = topk_idxs.unsqueeze(-1).expand(-1, -1, C)   # [M, K, C]
+    allm_video_feats = video_feats[scatter_m2s]             # [M, P, C]
+    topk_video_feats = allm_video_feats.gather(
+        dim=1, index=topk_idxs)                             # [M, K, C]
+
+    # need to convert video_feats from [S, P, C] to [B, P, C]
+    inter_query_all = torch.mm(
+        sents_feats,                                        # [S, C]
+        video_feats[scatter_b2s].view(-1, C).t(),           # [C, B * P]
+    )                                                       # [S, B * P]
+    # compute cos_sim of query to all neg proposals
+    inter_query_sim = inter_query_all[scatter_m2s]          # [M, B * P]
+    inter_query_sim = inter_query_sim                       # [M, B * P]
+    # [-1, 1] -> [0, 1]
+    inter_query_sim = (inter_query_sim + 1) / 2             # [M, B * P]
+    assert (inter_query_sim > 0 - 1e-3).all()
+    assert (inter_query_sim < 1 + 1e-3).all()
+
+    # compute cos_sim of topk video proposals and all neg proposals
+    # intra_video_all  [M, B * P]
+    intra_video_all = torch.matmul(
+        topk_video_feats,                                   # [M, K, C]
+        video_feats[scatter_b2s].view(-1, C).t(),           # [C, B * P]
+    ).mean(dim=1)                                           # [M, B * P]
+    # [-1, 1] -> [0, 1]
+    intra_video_sim = (intra_video_all + 1) / 2             # [M, B * P]
+    assert (intra_video_sim > 0 - 1e-3).all()
+    assert (intra_video_sim < 1 + 1e-3).all()
+    
+    fused_neg_sim = config.fusion_ratio * inter_query_sim + \
+        (1 - config.fusion_ratio) * intra_video_sim                # [M, B * P]
+    
+    # find the top-x% neg proposals for each target
+    false_neg_mask = torch.zeros_like(fused_neg_sim)        # [M, B * P]
+    for target_idx, (target_fused_neg_sim, neg_mask) in enumerate(zip(fused_neg_sim, target_inter_query_neg_mask)):
+        neg_masked_fused_neg_sim = target_fused_neg_sim.masked_select(neg_mask)
+        remove_mask = torch.zeros_like(neg_masked_fused_neg_sim)
+        K = int(config.top_neg_removal_percent * int(neg_masked_fused_neg_sim.size(dim=0)))
+        topk_idx = neg_masked_fused_neg_sim.topk(K, dim=0)[1]        
+        remove_mask[topk_idx] = 1
+        false_neg_mask[target_idx][neg_mask.clone()] = remove_mask
+    
+    # convert false_neg_mask from [M, B * P] to [S, B * P]
+    num_t = 0
+    final_false_neg_mask = torch.zeros(S, B * P, device=device)    
+    for sent_idx, num_target in enumerate(num_targets):
+        # if num_target == 1, find where > 0
+        # if num_target > 1, find where > 1 (intersection of at least two targets' false neg)
+        final_false_neg_mask[sent_idx] = \
+            false_neg_mask[num_t: num_t + num_target].sum(dim=0) > min(num_target - 1, 1)
+        num_t += num_target
+    false_neg_mask_con = final_false_neg_mask.bool()        # [S, B * P]
+    false_neg_mask_iou = false_neg_mask_con[local_mask].reshape(S, P)     # [S, P]
+
+    return false_neg_mask_con, false_neg_mask_iou
+
+
 def train_epoch(
     model: torch.nn.Module,
     loader: torch.utils.data.DataLoader,
@@ -149,6 +265,32 @@ def train_epoch(
         # video_feats: [num_sents, seq_len, feat_dim]
         video_feats, sents_feats, logits2d, scores2ds, mask2d = model(**batch)
 
+        if config.do_fnc:
+            # Find false negative and return [S, B * P] mask
+            false_neg_mask_con, false_neg_mask_iou = find_false_negative(
+                video_feats=video_feats,
+                sents_feats=sents_feats,
+                num_sentences=batch['num_sentences'],
+                num_targets=batch['num_targets'],
+                iou2d=iou2d,
+                iou2ds=iou2ds,
+                mask2d=mask2d,
+                config=config,
+            )
+        # Don't do FNC
+        else:
+            false_neg_mask_con = None
+            false_neg_mask_iou = None
+
+        # FNC and DNS loss functions
+        # Control do_dns by start_dns_epoch
+        loss_iou, loss_iou_metrics = loss_iou_fn(
+            logits2d=logits2d,
+            iou2d=iou2d,
+            mask2d=mask2d,
+            false_neg_mask=false_neg_mask_iou,
+        )
+
         loss_inter, loss_inter_metrics = loss_inter_fn(
             video_feats=video_feats,
             sents_feats=sents_feats,
@@ -157,21 +299,10 @@ def train_epoch(
             iou2d=iou2d,
             iou2ds=iou2ds,
             mask2d=mask2d,
+            epoch=epoch,
+            false_neg_mask=false_neg_mask_con,
         )
-        #  return neg mask
-        # (loss_inter,
-        #  loss_inter_metrics,
-        #  bce_sampled_neg_mask,
-        #  intra_sampled_neg_mask) = loss_inter_fn(
-        #     video_feats=video_feats,
-        #     sents_feats=sents_feats,
-        #     num_sentences=batch['num_sentences'],
-        #     num_targets=batch['num_targets'],
-        #     iou2d=iou2d,
-        #     iou2ds=iou2ds,
-        #     mask2d=mask2d,
-        #     epoch=epoch,
-        # )
+
         loss_intra, loss_intra_metrics = loss_intra_fn(
             video_feats=video_feats,
             sents_feats=sents_feats,
@@ -180,16 +311,39 @@ def train_epoch(
             iou2d=iou2d,
             iou2ds=iou2ds,
             mask2d=mask2d,
-            # sampled_neg_mask=intra_sampled_neg_mask,
-        )
-        # also do false negative removal
-        loss_iou, loss_iou_metrics = loss_iou_fn(
-            logits2d=logits2d,
-            iou2d=iou2d,
-            mask2d=mask2d,
-            # sampled_neg_mask=bce_sampled_neg_mask,
+            epoch=epoch,
+            false_neg_mask=false_neg_mask_con,
         )
 
+        # # original loss functions        
+        # loss_iou, loss_iou_metrics = loss_iou_fn(
+        #     logits2d=logits2d,
+        #     iou2d=iou2d,
+        #     mask2d=mask2d,
+        # )
+
+        # loss_inter, loss_inter_metrics = loss_inter_fn(
+        #     video_feats=video_feats,
+        #     sents_feats=sents_feats,
+        #     num_sentences=batch['num_sentences'],
+        #     num_targets=batch['num_targets'],
+        #     iou2d=iou2d,
+        #     iou2ds=iou2ds,
+        #     mask2d=mask2d,
+        # )
+
+        # loss_intra, loss_intra_metrics = loss_intra_fn(
+        #     video_feats=video_feats,
+        #     sents_feats=sents_feats,
+        #     num_sentences=batch['num_sentences'],
+        #     num_targets=batch['num_targets'],
+        #     iou2d=iou2d,
+        #     iou2ds=iou2ds,
+        #     mask2d=mask2d,
+        # )
+
+
+        # Contrastive Decay
         if epoch < config.contrastive_decay_start:
             loss = \
                 loss_iou + loss_inter + loss_intra
@@ -295,34 +449,8 @@ def training_loop(config: AttrDict):
         )
 
     # loss functions
-    loss_iou_fn = construct_class(
-        config.IoULoss,
-        min_iou=config.min_iou,
-        max_iou=config.max_iou,
-        alpha=config.alpha,
-        gamma=config.gamma,
-        weight=config.iou_weight,
-    )
-    loss_inter_fn = construct_class(
-        config.InterContrastiveLoss,
-        t=config.inter_t,
-        m=config.inter_m,
-        neg_iou=config.neg_iou,
-        pos_topk=config.pos_topk,
-        top_neg_removal_percent=config.top_neg_removal_percent,
-        weight=config.inter_weight,
-    )
-    loss_intra_fn = construct_class(
-        config.IntraContrastiveLoss,
-        t=config.intra_t,
-        m=config.intra_m,
-        neg_iou=config.neg_iou,
-        pos_topk=config.pos_topk,
-        top_neg_removal_percent=config.top_neg_removal_percent,
-        weight=config.intra_weight,
-    )
     # loss_iou_fn = construct_class(
-    #     config.IoULoss + 'DNS',
+    #     config.IoULoss,
     #     min_iou=config.min_iou,
     #     max_iou=config.max_iou,
     #     alpha=config.alpha,
@@ -330,31 +458,52 @@ def training_loop(config: AttrDict):
     #     weight=config.iou_weight,
     # )
     # loss_inter_fn = construct_class(
-    #     config.InterContrastiveLoss + 'DNS',
+    #     config.InterContrastiveLoss,
     #     t=config.inter_t,
     #     m=config.inter_m,
     #     neg_iou=config.neg_iou,
     #     pos_topk=config.pos_topk,
-    #     top_neg_removal_percent=config.top_neg_removal_percent,
     #     weight=config.inter_weight,
-    #     inter_query_threshold=config.inter_query_threshold,
-    #     intra_video_threshold=config.intra_video_threshold,
-    #     fusion_ratio=config.fusion_ratio,
-    #     exponent=config.exponent,
-    #     neg_samples_num=config.neg_samples_num,
-    #     start_DNS_epoch=config.start_dns_epoch,
-    #     rate_step_change=config.rate_step_change,
     # )
     # loss_intra_fn = construct_class(
-    #     config.IntraContrastiveLoss + 'DNS',
+    #     config.IntraContrastiveLoss,
     #     t=config.intra_t,
     #     m=config.intra_m,
     #     neg_iou=config.neg_iou,
     #     pos_topk=config.pos_topk,
-    #     top_neg_removal_percent=config.top_neg_removal_percent,
     #     weight=config.intra_weight,
-    #     mixup_alpha=config.mixup_alpha
     # )
+
+    loss_iou_fn = construct_class(
+        config.IoULoss + 'DNS',
+        min_iou=config.min_iou,
+        max_iou=config.max_iou,
+        alpha=config.alpha,
+        gamma=config.gamma,
+        weight=config.iou_weight,
+    )
+    loss_inter_fn = construct_class(
+        config.InterContrastiveLoss + 'DNS',
+        t=config.inter_t,
+        m=config.inter_m,
+        neg_iou=config.neg_iou,
+        pos_topk=config.pos_topk,
+        weight=config.inter_weight,
+        exponent=config.exponent,
+        neg_samples_num=config.neg_samples_num,
+        start_DNS_epoch=config.start_dns_epoch,
+    )
+    loss_intra_fn = construct_class(
+        config.IntraContrastiveLoss + 'DNS',
+        t=config.intra_t,
+        m=config.intra_m,
+        neg_iou=config.neg_iou,
+        pos_topk=config.pos_topk,
+        weight=config.intra_weight,
+        exponent=config.exponent,
+        neg_samples_num=config.neg_samples_num,
+        start_DNS_epoch=config.start_dns_epoch,
+    )
 
     # model
     model_local = MMN(

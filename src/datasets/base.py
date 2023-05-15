@@ -119,10 +119,6 @@ class CollateBase(torch.utils.data.Dataset):
 
         return video_feats
 
-    # def augmentation(self, anno, video_feats):
-    #     """Do multi positive augmentation"""
-    #     raise NotImplementedError
-
     def augmentation(self, anno, video_feats):
         """Do multi positive augmentation"""
         '''
@@ -227,9 +223,12 @@ class CollateBase(torch.utils.data.Dataset):
                     if aug_seq_len != math.ceil(target_seq_len / 2):
                         aug_seq_end_idx = aug_seq_start_idx + math.ceil(target_seq_len / 2)
                         aug_seq_len = math.ceil(target_seq_len / 2)
+
                         # aug_seq_end_idx could possiblily == seq_len?
                         if aug_seq_end_idx == seq_len:
-                            raise ValueError("Aug seq end idx == seq_len")
+                            aug_seq_end_idx = aug_seq_end_idx - 1
+                            aug_seq_start_idx = aug_seq_start_idx - 1
+                            # raise ValueError("Aug seq end idx == seq_len")
 
                     # mixup
                     mixup_feat = self.downsample(
@@ -253,7 +252,7 @@ class CollateBase(torch.utils.data.Dataset):
                     new_tgt_moments.append(anno['tgt_moments'][shift_t:shift_t + num_target])
                     shift_t += num_target
 
-            else:   # not downsample
+            else:   # no downsample
                 mask = [(empty_clips_len > (tgt_moment[1] - tgt_moment[0]) * self.aug_expand_rate).any()
                         for tgt_moment in tgt_moments]
                 mask = torch.tensor(mask).float()     # [0, 1, 0, ...]
@@ -326,8 +325,6 @@ class CollateBase(torch.utils.data.Dataset):
                     shift_t += num_target
 
                 else:   # do augmentation but no proper empty clip
-                    # print(f"do augmentation but no proper empty clip, {empty_clips}, {empty_clips_len}", flush=True)
-                    # print(f"{empty_clips[-1][0].dtype, empty_clips[-1][1].dtype}", flush=True)
                     new_num_targets.append(num_target)
                     new_tgt_moments.append(anno['tgt_moments'][shift_t:shift_t + num_target])
                     shift_t += num_target

@@ -44,21 +44,22 @@ class ScaledIoULoss(nn.Module):
         )
 
 
-class ScaledIoULossDNS(ScaledIoULoss):
+class ScaledIoULossDNS(nn.Module):
     def __init__(self, min_iou, max_iou, weight=1.0, *args, **kwargs,):
-        super().__init__(min_iou,
-                         max_iou,
-                         weight)
+        super().__init__()
+        self.min_iou = min_iou
+        self.max_iou = max_iou
+        self.weight = weight
 
     def linear_scale(self, iou: torch.Tensor):
         return iou.sub(self.min_iou).div(self.max_iou - self.min_iou).clamp(0, 1)
 
     def forward(
         self,
-        logits2d: torch.Tensor,     # [S, N, N]
-        iou2d: torch.Tensor,        # [S, N, N]
-        mask2d: torch.Tensor,       # [N, N]
-        sampled_neg_mask: torch.Tensor = None,  # [S, P]
+        logits2d: torch.Tensor,                 # [S, N, N]
+        iou2d: torch.Tensor,                    # [S, N, N]
+        mask2d: torch.Tensor,                   # [N, N]
+        false_neg_mask: torch.Tensor = None,    # [S, P]
     ):
         """
             B: (B)atch size
@@ -76,9 +77,12 @@ class ScaledIoULossDNS(ScaledIoULoss):
         logits1d = logits2d.masked_select(mask2d).view(S, -1)   # [S, P]
         iou1d = iou2d.masked_select(mask2d).view(S, -1)         # [S, P]
         iou1d = self.linear_scale(iou1d)                        # [S, P]
-        if sampled_neg_mask is not None:
+
+        if false_neg_mask != None:
             loss = F.binary_cross_entropy_with_logits(logits1d, iou1d, reduction='none')
-            loss = (loss * sampled_neg_mask).sum() / sampled_neg_mask.sum()
+            # ignore false neg
+            loss[false_neg_mask] = 0                                # [S, P]
+            loss = loss.sum() / (~false_neg_mask).sum()
         else:
             loss = F.binary_cross_entropy_with_logits(logits1d, iou1d)
 

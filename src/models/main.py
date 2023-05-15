@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 from src.misc import construct_class
 from src.models.modules import (
-    AggregateVideo, Conv1dPool, SparseMaxPool, SparsePropConv, LanguageModel)
+    AggregateVideo, Conv1dPool, SparseMaxPool, LanguageModel)
 
 
 # cos sim between 2D proposal map and query
@@ -163,7 +163,7 @@ class MMN(nn.Module):
         sents_feats1, sents_feats2 = self.sents_model(
             sents_tokens,
             sents_masks
-        )                   # [S, C]
+        )                                                           # [S, C]
 
         if self.dual_space:
             iou_scores2d, logits2d = iou_scores(

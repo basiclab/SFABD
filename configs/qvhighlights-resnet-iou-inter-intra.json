@@ -13,7 +13,7 @@
     "conv2d_num_layers": 4,
     "joint_space_size": 256,
     "dual_space": false,
-    "resnet": 50,
+    "resnet": 18,
 
     "IoULoss": "src.losses.iou.ScaledIoULoss",
     "min_iou": 0.5,
@@ -44,11 +44,14 @@
     "mixup_alpha": 0.9,
     "aug_expand_rate": 1.0,
     "downsampling_method": "odd",
+
+    "do_dns": false,
     "start_dns_epoch": 999,
 
-    "MultiPositiveContrastiveLoss": "src.losses.contrastive.MultiPositiveContrastiveLoss",
+    "do_fnc": false,
+    "fusion_ratio": 0.9,
 
-    "epochs": 6,
+    "epochs": 7,
     "batch_size": 24,
     "base_lr": 1e-3,
     "bert_lr": 1e-5,
