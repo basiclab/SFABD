@@ -206,11 +206,6 @@ def calculate_mAPs(
 
     # buffer for all samples
     calc_buffer = []
-    # buffer for short/medium/long clips
-    # calc_buffer_short = []
-    # calc_buffer_medium = []
-    # calc_buffer_long = []
-
     shift_p = 0
     shift_t = 0
     for num_p, num_t in zip(num_proposals, num_targets):
@@ -220,31 +215,6 @@ def calculate_mAPs(
             out_moments[shift_p: shift_p + num_p],
             out_scores1ds[shift_p: shift_p + num_p],
         ])
-
-        # short/medium/long
-        # tgt_length = sample_tgt_moments[:, 1] - sample_tgt_moments[:, 0]
-        # short_mask = tgt_length.lt(0.05)
-        # medium_mask = tgt_length.ge(0.05) * tgt_length.lt(0.4)
-        # long_mask = tgt_length.gt(0.4)
-
-        # if short_mask.sum() > 0:
-        #     calc_buffer_short.append([
-        #         sample_tgt_moments[short_mask],
-        #         out_moments[shift_p: shift_p + num_p],
-        #         out_scores1ds[shift_p: shift_p + num_p],
-        #     ])
-        # if medium_mask.sum() > 0:
-        #     calc_buffer_medium.append([
-        #         sample_tgt_moments[medium_mask],
-        #         out_moments[shift_p: shift_p + num_p],
-        #         out_scores1ds[shift_p: shift_p + num_p],
-        #     ])
-        # if long_mask.sum() > 0:
-        #     calc_buffer_long.append([
-        #         sample_tgt_moments[long_mask],
-        #         out_moments[shift_p: shift_p + num_p],
-        #         out_scores1ds[shift_p: shift_p + num_p],
-        #     ])
 
         shift_p += num_p
         shift_t += num_t
@@ -256,31 +226,10 @@ def calculate_mAPs(
         APs.append(calculate_APs_worker(*data, mAP_ious, max_proposals))
     APs = torch.stack(APs)
 
-    # # calculate AP for short clips
-    # APs_sh = []
-    # for data in tqdm(calc_buffer_short, ncols=0, leave=False,
-    #                  desc="short mAP", disable=not dist.is_main()):
-    #     APs_sh.append(calculate_APs_worker(*data, mAP_ious, max_proposals))
-
-    # # calculate AP for medium clips
-    # APs_md = []
-    # for data in tqdm(calc_buffer_medium, ncols=0, leave=False,
-    #                  desc="medium mAP", disable=not dist.is_main()):
-    #     APs_md.append(calculate_APs_worker(*data, mAP_ious, max_proposals))
-
-    # # calculate AP for long clips
-    # APs_lg = []
-    # for data in tqdm(calc_buffer_long, ncols=0, leave=False,
-    #                  desc="long mAP", disable=not dist.is_main()):
-    #     APs_lg.append(calculate_APs_worker(*data, mAP_ious, max_proposals))
-
     APs_dict = {
         'all': APs,                       # all
         'sgl': APs[num_targets == 1],     # single-target
         'mul': APs[num_targets > 1],      # multi-target
-        # 'sh': torch.stack(APs_sh),        # short
-        # 'md': torch.stack(APs_md),        # medium
-        # 'lg': torch.stack(APs_lg),        # long
     }
 
     mAPs_dict = {}
@@ -304,3 +253,44 @@ def calculate_mAPs(
         results[key] = mAPs_dict[key]
 
     return results
+
+
+def calculate_mAPs_no_mean(
+    pred_moments: List[Dict[str, torch.Tensor]],
+    true_moments: List[Dict[str, torch.Tensor]],
+    mAP_ious: List[float] = torch.linspace(0.5, 0.95, 10),
+    max_proposals: int = 10,
+) -> float:
+    pred_moments = batchs2results(pred_moments)
+    out_moments = pred_moments['out_moments']
+    out_scores1ds = pred_moments['out_scores1ds']
+    num_proposals = pred_moments['num_proposals']
+
+    true_moments = batchs2results(true_moments)
+    tgt_moments = true_moments['tgt_moments']
+    num_targets = true_moments['num_targets']
+
+    # buffer for all samples
+    calc_buffer = []
+    shift_p = 0
+    shift_t = 0
+    for num_p, num_t in zip(num_proposals, num_targets):
+        sample_tgt_moments = tgt_moments[shift_t: shift_t + num_t]
+        calc_buffer.append([
+            sample_tgt_moments,
+            out_moments[shift_p: shift_p + num_p],
+            out_scores1ds[shift_p: shift_p + num_p],
+        ])
+
+        shift_p += num_p
+        shift_t += num_t
+
+    # calculate AP for mixed-length clips
+    APs = []
+    for data in tqdm(calc_buffer, ncols=0, leave=False, desc="mAP",
+                     disable=not dist.is_main()):
+        APs.append(calculate_APs_worker(*data, mAP_ious, max_proposals))
+    APs = torch.stack(APs)   # [num_samples, num_iou_thres]  ex. [1550, 10]
+
+    # return every samples' mAP_avg
+    return APs.mean(dim=1), num_targets  # [1550]

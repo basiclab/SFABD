@@ -16,7 +16,4 @@ logs
 *.csv
 *.sh
 generate_sh.py
-generate_inter_aug_sh.py
-generate_inter_intra_aug_sh.py
-generate_DNS_sh.py
 evaluate_result.py

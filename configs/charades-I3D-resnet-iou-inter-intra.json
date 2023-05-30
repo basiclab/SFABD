@@ -6,14 +6,14 @@
     "MultiTestDataset": "src.datasets.charades.CharadesSTAI3DMultiTest",
 
     "backbone": "src.models.resnet.ProposalConv",
-    "feat1d_out_channel": 512,
+    "feat1d_out_channel": 256,
     "feat1d_pool_kernel_size": 2,
     "feat2d_pool_counts": [16],
-    "conv2d_hidden_channel": 512,
+    "conv2d_hidden_channel": 256,
     "conv2d_kernel_size": 5,
     "conv2d_num_layers": 8,
     "joint_space_size": 256,
-    "dual_space": false,
+    "dual_space": true,
     "resnet": 18,
 
     "IoULoss": "src.losses.iou.ScaledIoULoss",
@@ -46,12 +46,9 @@
     "aug_expand_rate": 1.0,
     "downsampling_method": "odd",
 
-    "inter_query_threshold": 0.7,
-    "intra_video_threshold": 0.9,
     "fusion_ratio": 0.5,
     "exponent": 2,
     "neg_samples_num": 512,
-    "rate_step_change": 0.05,
     "start_dns_epoch": 999,
 
     "epochs": 9,

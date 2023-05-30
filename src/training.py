@@ -2,6 +2,7 @@ import json
 import os
 from collections import defaultdict
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from tensorboardX import SummaryWriter
@@ -48,7 +49,10 @@ def test_epoch(
         # prediciton
         with torch.no_grad():
             *_, scores2ds, mask2d = model(**batch)
-        out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)        # out_moments: [S, P, 2]
+        # scores2ds: [S, N, N]
+        # out_moments: [S, P, 2]
+        out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
+        # use different nms_thres for different query sample?
         pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
         pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
         pred_moments.append(pred_moments_batch)
@@ -121,6 +125,7 @@ def val_epoch(
     return pred_moments, true_moments
 
 
+@torch.no_grad()
 def find_false_negative(
     video_feats: torch.Tensor,          # [S, C, N, N]
     sents_feats: torch.Tensor,          # [S, C]
@@ -130,7 +135,9 @@ def find_false_negative(
     iou2ds: torch.Tensor,               # [M, N, N]
     mask2d: torch.Tensor,               # [N, N]
     config: AttrDict,
-) -> torch.Tensor:                      # [S, B * P]                      
+    epoch: int,
+    batch_info: AttrDict,
+) -> torch.Tensor:                      # [S, B * P]
     S, C, N, _ = video_feats.shape
     B = num_sentences.shape[0]
     M = num_targets.sum().cpu().item()
@@ -139,7 +146,7 @@ def find_false_negative(
     device = video_feats.device
     assert iou2d.shape == (S, N, N), f"{iou2d.shape} != {(S, N, N)}"
     assert iou2ds.shape == (M, N, N), f"{iou2ds.shape} != {(M, N, N)}"
-    
+
     # Choose each sample's first sentence idx for mapping S to B
     scatter_b2s = []
     count = 0
@@ -154,7 +161,7 @@ def find_false_negative(
     # moment idx -> sentence idx
     scatter_m2s = torch.arange(S, device=device).long()
     scatter_m2s = scatter_m2s.repeat_interleave(num_targets)        # [M]
-    
+
     video_feats = video_feats.masked_select(mask2d).view(S, C, -1)  # [S, C, P]
     video_feats = video_feats.permute(0, 2, 1)                      # [S, P, C]
     iou2d = iou2d.masked_select(mask2d).view(S, -1)                 # [S, P]
@@ -163,6 +170,31 @@ def find_false_negative(
     # normalize for cosine similarity
     video_feats = F.normalize(video_feats.contiguous(), dim=-1)     # [S, P, C]
     sents_feats = F.normalize(sents_feats.contiguous(), dim=-1)     # [S, C]
+
+    # === inter video (topk proposal -> all sentences)
+    topk_idxs = iou2ds.topk(K, dim=1)[1]                    # [M, K]
+    topk_idxs = topk_idxs.unsqueeze(-1).expand(-1, -1, C)   # [M, K, C]
+    allm_video_feats = video_feats[scatter_m2s]             # [M, P, C]
+    topk_video_feats = allm_video_feats.gather(
+        dim=1, index=topk_idxs)                             # [M, K, C]
+
+    # pos sample sim score
+    inter_query_pos = torch.mul(
+        topk_video_feats,                                   # [M, K, C]
+        sents_feats[scatter_m2s].unsqueeze(1)               # [M, 1, C]
+    ).sum(dim=-1)                                           # [M, K]
+    inter_query_pos = (inter_query_pos + 1) / 2             # [M, K]
+
+    # need to convert video_feats from [S, P, C] to [B, P, C]
+    inter_query_all = torch.mm(
+        sents_feats,                                        # [S, C]
+        video_feats[scatter_b2s].view(-1, C).t(),           # [C, B * P]
+    )                                                       # [S, B * P]
+
+    # [-1, 1] -> [0, 1]
+    inter_query_sim = (inter_query_all + 1) / 2             # [S, B * P]
+    assert (inter_query_sim > 0 - 1e-3).all()
+    assert (inter_query_sim < 1 + 1e-3).all()
 
     # pos mask for [S, B * P] video proposals
     pos_mask = torch.eye(B, device=device).bool()           # [B, B]
@@ -174,64 +206,104 @@ def find_false_negative(
     s2v_pos_mask = iou2d > 0.5                              # [S, P]
     local_mask = pos_mask.clone()                           # [S, B * P]
     pos_mask[local_mask] = s2v_pos_mask.view(-1)            # [S, B * P]
-    # neg mask for each target, for selecting neg proposals for each target
-    target_inter_query_neg_mask = ~pos_mask[scatter_m2s]    # [M, B * P]
+    inter_query_neg_mask = ~pos_mask                        # [S, B * P]
 
-    # === inter video (topk proposal -> all sentences)
-    topk_idxs = iou2ds.topk(K, dim=1)[1]                    # [M, K]
-    topk_idxs = topk_idxs.unsqueeze(-1).expand(-1, -1, C)   # [M, K, C]
-    allm_video_feats = video_feats[scatter_m2s]             # [M, P, C]
-    topk_video_feats = allm_video_feats.gather(
-        dim=1, index=topk_idxs)                             # [M, K, C]
+    # compute false neg threshold for each query
+    record_batch_idx = 0
+    # compute record_sent_idx
+    num_s = 0
+    for batch_idx, num_sentence in enumerate(num_sentences):
+        if batch_idx == record_batch_idx:
+            record_sent_idx = num_s
+        num_s += num_sentence
 
-    # need to convert video_feats from [S, P, C] to [B, P, C]
-    inter_query_all = torch.mm(
-        sents_feats,                                        # [S, C]
-        video_feats[scatter_b2s].view(-1, C).t(),           # [C, B * P]
-    )                                                       # [S, B * P]
-    # compute cos_sim of query to all neg proposals
-    inter_query_sim = inter_query_all[scatter_m2s]          # [M, B * P]
-    inter_query_sim = inter_query_sim                       # [M, B * P]
-    # [-1, 1] -> [0, 1]
-    inter_query_sim = (inter_query_sim + 1) / 2             # [M, B * P]
-    assert (inter_query_sim > 0 - 1e-3).all()
-    assert (inter_query_sim < 1 + 1e-3).all()
-
-    # compute cos_sim of topk video proposals and all neg proposals
-    # intra_video_all  [M, B * P]
-    intra_video_all = torch.matmul(
-        topk_video_feats,                                   # [M, K, C]
-        video_feats[scatter_b2s].view(-1, C).t(),           # [C, B * P]
-    ).mean(dim=1)                                           # [M, B * P]
-    # [-1, 1] -> [0, 1]
-    intra_video_sim = (intra_video_all + 1) / 2             # [M, B * P]
-    assert (intra_video_sim > 0 - 1e-3).all()
-    assert (intra_video_sim < 1 + 1e-3).all()
-    
-    fused_neg_sim = config.fusion_ratio * inter_query_sim + \
-        (1 - config.fusion_ratio) * intra_video_sim                # [M, B * P]
-    
-    # find the top-x% neg proposals for each target
-    false_neg_mask = torch.zeros_like(fused_neg_sim)        # [M, B * P]
-    for target_idx, (target_fused_neg_sim, neg_mask) in enumerate(zip(fused_neg_sim, target_inter_query_neg_mask)):
-        neg_masked_fused_neg_sim = target_fused_neg_sim.masked_select(neg_mask)
-        remove_mask = torch.zeros_like(neg_masked_fused_neg_sim)
-        K = int(config.top_neg_removal_percent * int(neg_masked_fused_neg_sim.size(dim=0)))
-        topk_idx = neg_masked_fused_neg_sim.topk(K, dim=0)[1]        
-        remove_mask[topk_idx] = 1
-        false_neg_mask[target_idx][neg_mask.clone()] = remove_mask
-    
-    # convert false_neg_mask from [M, B * P] to [S, B * P]
     num_t = 0
-    final_false_neg_mask = torch.zeros(S, B * P, device=device)    
+    false_neg_thres = []            # [S]
+    false_neg_accept_rate = []      # [S]
     for sent_idx, num_target in enumerate(num_targets):
-        # if num_target == 1, find where > 0
-        # if num_target > 1, find where > 1 (intersection of at least two targets' false neg)
-        final_false_neg_mask[sent_idx] = \
-            false_neg_mask[num_t: num_t + num_target].sum(dim=0) > min(num_target - 1, 1)
+        # adaptive false neg threshold of this query
+        pos_sim_record = inter_query_pos[num_t:num_t + num_target].mean(dim=-1)  # [num_target]
+        neg_sim_record = inter_query_sim[sent_idx][inter_query_neg_mask[sent_idx]]
+        mean_pos_sim = pos_sim_record.mean()
+        mean_neg_sim = neg_sim_record.mean()
+        false_neg_thres.append(mean_pos_sim)
+        # y = x
+        accept_rate = (mean_pos_sim - mean_neg_sim)
+        # y = e^x - 1
+        # accept_rate = torch.exp(mean_pos_sim - mean_neg_sim) - 1
+        # y = ln(x + 1)
+        # accept_rate = torch.log(mean_pos_sim - mean_neg_sim + 1)
+        false_neg_accept_rate.append(accept_rate)
+
         num_t += num_target
-    false_neg_mask_con = final_false_neg_mask.bool()        # [S, B * P]
-    false_neg_mask_iou = false_neg_mask_con[local_mask].reshape(S, P)     # [S, P]
+
+    # fused neg sim for neg sample ranking
+    fused_neg_sim = inter_query_sim                                # [S, B * P]
+
+    # find false neg with adaptive threshold
+    false_neg_mask = torch.zeros_like(fused_neg_sim)        # [S, B * P]
+    for sent_idx, (fused_neg_sim, neg_mask, neg_thres, accept_rate) in enumerate(
+        zip(fused_neg_sim, inter_query_neg_mask, false_neg_thres, false_neg_accept_rate)
+    ):
+        neg_masked_fused_neg_sim = fused_neg_sim.masked_select(neg_mask)
+        neg_thres_mask = torch.zeros_like(neg_masked_fused_neg_sim)
+        neg_thres_mask[neg_masked_fused_neg_sim > neg_thres] = 1
+        neg_thres_mask = neg_thres_mask.bool()
+        # only keep top-k% as false neg (k = false neg accept rate)
+        if neg_thres_mask.sum() > 0:
+            K = round(int(max(accept_rate, 0) * neg_thres_mask.sum().item()))
+            topk_idx = neg_masked_fused_neg_sim[neg_thres_mask].topk(K, dim=0)[1]
+            keep_mask = torch.zeros_like(neg_masked_fused_neg_sim[neg_thres_mask])
+            keep_mask[topk_idx] = 1
+            temp_mask = torch.zeros_like(false_neg_mask[sent_idx][neg_mask.clone()])
+            temp_mask[neg_thres_mask.clone()] = keep_mask
+            false_neg_mask[sent_idx][neg_mask.clone()] = temp_mask
+        # no neg > thres
+        else:
+            false_neg_mask[sent_idx][neg_mask.clone()] = torch.zeros_like(neg_masked_fused_neg_sim)
+
+    false_neg_mask_con = false_neg_mask.bool()                          # [S, B * P]
+    false_neg_mask_iou = false_neg_mask_con[local_mask].reshape(S, P)   # [S, P]
+
+    # record false neg info
+    false_neg_vid_list = []
+    false_neg_time_list = []
+    moments = mask2d.nonzero()                                          # [P, 2]
+    moments[:, 1] += 1                                                  # [P, 2]
+    moments = moments / N                                               # [P, 2]
+    record_false_neg_mask = false_neg_mask_con[record_sent_idx].reshape(B, P)
+    record_false_neg_idx = record_false_neg_mask.nonzero()              # [num_false_neg, 2]
+    for idx, false_neg in enumerate(record_false_neg_idx):
+        batch_idx, proposal_idx = false_neg
+        false_neg_vid_list.append(batch_info['vid'][batch_idx])
+        false_neg_time_list.append(
+            (moments[proposal_idx].cpu().detach().numpy() * batch_info['duration'][batch_idx].item()).tolist()
+        )
+
+    # Record some samples
+    if dist.is_main():
+        # record 1st sample of each batch
+        mean_pos_sim = pos_sim_record.mean().item()
+        max_neg_sim = neg_sim_record.max().item()
+        mean_neg_sim = neg_sim_record.mean().item()
+        min_neg_sim = neg_sim_record.min().item()
+
+        append_to_json_file(
+            os.path.join(config.logdir, "false_neg.json"),
+            {
+                'epoch': epoch,                             # int
+                'vid': batch_info['vid'][record_batch_idx],                # str
+                'query': batch_info['sentences'][record_batch_idx][0],
+                'sample_idx': batch_info['idx'][record_batch_idx].item(),         # int
+                'pos_sim': pos_sim_record.tolist(),                    # list[float], sim of all pos samples
+                'max_neg_sim': max_neg_sim,                   # float
+                'mean_neg_sim': mean_neg_sim,                 # float
+                'min_neg_sim': min_neg_sim,                   # float
+                'mean_gap': mean_pos_sim - mean_neg_sim,      # float, mean_pos_sim - mean_neg_sim
+                'false_neg_vid': false_neg_vid_list,          # list[str]
+                'false_neg_timestamps': false_neg_time_list,  # list[[float, float]]
+            }
+        )
 
     return false_neg_mask_con, false_neg_mask_iou
 
@@ -258,7 +330,7 @@ def train_epoch(
     losses = defaultdict(list)
     pred_moments = []
     true_moments = []
-    for batch, _ in pbar:
+    for batch, batch_info in pbar:
         batch = {key: value.to(device) for key, value in batch.items()}
         iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips)  # [M, N, N]
         iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])               # [S, N, N]
@@ -276,6 +348,8 @@ def train_epoch(
                 iou2ds=iou2ds,
                 mask2d=mask2d,
                 config=config,
+                epoch=epoch,
+                batch_info=batch_info,
             )
         # Don't do FNC
         else:
@@ -314,34 +388,6 @@ def train_epoch(
             epoch=epoch,
             false_neg_mask=false_neg_mask_con,
         )
-
-        # # original loss functions        
-        # loss_iou, loss_iou_metrics = loss_iou_fn(
-        #     logits2d=logits2d,
-        #     iou2d=iou2d,
-        #     mask2d=mask2d,
-        # )
-
-        # loss_inter, loss_inter_metrics = loss_inter_fn(
-        #     video_feats=video_feats,
-        #     sents_feats=sents_feats,
-        #     num_sentences=batch['num_sentences'],
-        #     num_targets=batch['num_targets'],
-        #     iou2d=iou2d,
-        #     iou2ds=iou2ds,
-        #     mask2d=mask2d,
-        # )
-
-        # loss_intra, loss_intra_metrics = loss_intra_fn(
-        #     video_feats=video_feats,
-        #     sents_feats=sents_feats,
-        #     num_sentences=batch['num_sentences'],
-        #     num_targets=batch['num_targets'],
-        #     iou2d=iou2d,
-        #     iou2ds=iou2ds,
-        #     mask2d=mask2d,
-        # )
-
 
         # Contrastive Decay
         if epoch < config.contrastive_decay_start:
@@ -449,31 +495,6 @@ def training_loop(config: AttrDict):
         )
 
     # loss functions
-    # loss_iou_fn = construct_class(
-    #     config.IoULoss,
-    #     min_iou=config.min_iou,
-    #     max_iou=config.max_iou,
-    #     alpha=config.alpha,
-    #     gamma=config.gamma,
-    #     weight=config.iou_weight,
-    # )
-    # loss_inter_fn = construct_class(
-    #     config.InterContrastiveLoss,
-    #     t=config.inter_t,
-    #     m=config.inter_m,
-    #     neg_iou=config.neg_iou,
-    #     pos_topk=config.pos_topk,
-    #     weight=config.inter_weight,
-    # )
-    # loss_intra_fn = construct_class(
-    #     config.IntraContrastiveLoss,
-    #     t=config.intra_t,
-    #     m=config.intra_m,
-    #     neg_iou=config.neg_iou,
-    #     pos_topk=config.pos_topk,
-    #     weight=config.intra_weight,
-    # )
-
     loss_iou_fn = construct_class(
         config.IoULoss + 'DNS',
         min_iou=config.min_iou,
@@ -645,7 +666,7 @@ def training_loop(config: AttrDict):
     dist.barrier()
 
     for epoch in range(1, config.epochs + 1):
-        train_sampler.set_epoch(epoch)
+        # train_sampler.set_epoch(epoch)
 
         # freeze BERT parameters for the first few epochs
         if epoch == config.bert_fire_start:

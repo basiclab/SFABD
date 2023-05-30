@@ -312,6 +312,7 @@ class IntraContrastiveLoss(LogCrossEntropy):
             }
         )
 
+
 # Augmentation version DNS loss
 class InterContrastiveLossDNS(InterContrastiveLoss):
     def __init__(
@@ -462,7 +463,7 @@ class InterContrastiveLossDNS(InterContrastiveLoss):
             # x^exponent so that hard neg samples will be sampled more
             fused_neg_sim = torch.pow(fused_neg_sim, self.exponent)
             fused_neg_sim[pos_mask[scatter_m2s]] = 0             # ignore pos samples
-            if false_neg_mask != None:
+            if false_neg_mask is not None:
                 fused_neg_sim[false_neg_mask[scatter_m2s]] = 0   # ignore false neg samples
             # make sure the amount of negative samples is enough for sampling
             assert (fused_neg_sim > 0).sum() >= self.neg_samples_num
@@ -497,7 +498,7 @@ class InterContrastiveLossDNS(InterContrastiveLoss):
         # No dynamic negative sampling
         else:
             inter_query_neg_mask = ~pos_mask.unsqueeze(1)           # [S, 1, B * P]
-            if false_neg_mask != None:
+            if false_neg_mask is not None:
                 inter_query_neg_mask[false_neg_mask.unsqueeze(dim=1)] = 0    # remove false neg from neg mask
 
             loss_inter_query = super(InterContrastiveLoss, self).forward(
@@ -663,7 +664,7 @@ class IntraContrastiveLossDNS(IntraContrastiveLoss):
                 video_feats[scatter_b2s].view(-1, C).t(),           # [C, B * P]
             ).mean(dim=1)                                           # [M, B * P]
             # [-1, 1] -> [0, 1]
-            intra_video_sim = (intra_video_all_topk_mean + 1) / 2             # [M, B * P]            
+            intra_video_sim = (intra_video_all_topk_mean + 1) / 2             # [M, B * P]
             assert (intra_video_sim > 0 - 1e-3).all()
             assert (intra_video_sim < 1 + 1e-3).all()
 
@@ -677,7 +678,7 @@ class IntraContrastiveLossDNS(IntraContrastiveLoss):
             # x^exponent so that hard negative samples will be sampled more
             fused_neg_sim = torch.pow(fused_neg_sim, self.exponent)  # [S, B * P]
             fused_neg_sim[pos_mask] = 0             # ignore pos samples
-            if false_neg_mask != None:
+            if false_neg_mask is not None:
                 fused_neg_sim[false_neg_mask] = 0       # ignore false neg samples
             # make sure the amount of negative samples is enough for sampling
             assert (fused_neg_sim > 0).sum() >= self.neg_samples_num
@@ -703,7 +704,7 @@ class IntraContrastiveLossDNS(IntraContrastiveLoss):
         # No dynamic negative sampling
         else:
             intra_video_neg_mask = ~pos_mask                        # [S, B * P]
-            if false_neg_mask != None:
+            if false_neg_mask is not None:
                 intra_video_neg_mask[false_neg_mask] = 0                # remove false neg from neg mask
 
             loss_intra_video = super(IntraContrastiveLoss, self).forward(

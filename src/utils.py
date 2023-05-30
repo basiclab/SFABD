@@ -196,9 +196,9 @@ def plot_moments_on_iou2d(
     path: str,
 ):
     _, N = iou2d.shape  # N: num_clips
-
+    device = iou2d.device
     fig, axs = plt.subplots(1, 2, figsize=(10, 5.5))
-    offset = torch.ones(N, N).triu() * 0.05     # for better visualization
+    offset = torch.ones(N, N, device=device).triu() * 0.05     # for better visualization
     cm = plt.cm.get_cmap('Reds')
 
     # plot predicted 2d map score

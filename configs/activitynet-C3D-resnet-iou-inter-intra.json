@@ -14,7 +14,7 @@
     "conv2d_kernel_size": 9,
     "conv2d_num_layers": 4,
     "joint_space_size": 256,
-    "dual_space": false,
+    "dual_space": true,
     "resnet": 18,
 
     "IoULoss": "src.losses.iou.ScaledIoULoss",

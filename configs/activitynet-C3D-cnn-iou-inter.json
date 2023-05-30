@@ -7,14 +7,14 @@
     "MultiTestDataset": "src.datasets.activitynet.ActivityNetC3DMultiTest",
 
     "backbone": "src.models.cnn.ProposalConv",
-    "feat1d_out_channel": 512,
+    "feat1d_out_channel": 256,
     "feat1d_pool_kernel_size": 2,
     "feat2d_pool_counts": [16, 8, 8],
-    "conv2d_hidden_channel": 512,
+    "conv2d_hidden_channel": 256,
     "conv2d_kernel_size": 9,
     "conv2d_num_layers": 4,
     "joint_space_size": 256,
-    "dual_space": false,
+    "dual_space": true,
 
     "IoULoss": "src.losses.iou.ScaledIoULoss",
     "min_iou": 0.5,

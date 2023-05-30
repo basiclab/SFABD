@@ -30,7 +30,7 @@ def CommandAwareConfig(config_param_name):
                         ctx.params[param] = configs[param]
             unused = [k for k in configs.keys() if k not in ctx.params.keys()]
             if len(unused) > 0:
-                warnings.warn(f'{",".join(unused)} in the config file is/are not used')
+                warnings.warn(f'{", ".join(unused)} in the config file is/are not used')
             return super(CustomCommandClass, self).invoke(ctx)
     return CustomCommandClass
 

@@ -39,9 +39,6 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--alpha', default=0.25)
 @click.option('--gamma', default=2.0)
 @click.option('--iou_weight', default=1.0)
-# bbox regression loss
-@click.option('--iou_threshold', default=0.75)
-@click.option('--bbox_reg_weight', default=1.0)
 # contrastive loss common settings
 @click.option('--neg_iou', default=0.5)
 @click.option('--pos_topk', default=1)
@@ -68,7 +65,6 @@ from src.misc import AttrDict, CommandAwareConfig
 # False Negative Cancellation
 @click.option('--do_fnc', default=False, help='False Negative Cancellation')
 # Dynamic Negative Sampling
-@click.option('--do_dns', default=False, help='Dynamic Negative Sampling')
 @click.option('--inter_query_threshold', default=0.7, help='threshold for finding false negative')
 @click.option('--intra_video_threshold', default=0.9, help='threshold for finding false negative')
 @click.option('--fusion_ratio', default=0.5, help='linear combination ratio of inter_query_sim and intra_video_sim')
@@ -76,8 +72,6 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--neg_samples_num', default=512)
 @click.option('--start_dns_epoch', default=999)
 @click.option('--rate_step_change', default=0.05)
-# multi positive contrastive loss
-@click.option('--MultiPositiveContrastiveLoss', 'MultiPositiveContrastiveLoss', default="src.losses.contrastive.MultiPositiveContrastiveLoss")
 # optimizer
 @click.option('--epochs', default=10)
 @click.option('--batch_size', default=24)
