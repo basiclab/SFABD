@@ -224,15 +224,40 @@ def find_false_negative(
         # adaptive false neg threshold of this query
         pos_sim_record = inter_query_pos[num_t:num_t + num_target].mean(dim=-1)  # [num_target]
         neg_sim_record = inter_query_sim[sent_idx][inter_query_neg_mask[sent_idx]]
-        mean_pos_sim = pos_sim_record.mean()
-        mean_neg_sim = neg_sim_record.mean()
-        false_neg_thres.append(mean_pos_sim)
-        # y = x
-        accept_rate = (mean_pos_sim - mean_neg_sim)
-        # y = e^x - 1
-        # accept_rate = torch.exp(mean_pos_sim - mean_neg_sim) - 1
-        # y = ln(x + 1)
-        # accept_rate = torch.log(mean_pos_sim - mean_neg_sim + 1)
+
+        # false neg threshold
+        if config.thres_method == "mean":
+            false_neg_thres.append(pos_sim_record.mean())
+        elif config.thres_method == "max":
+            false_neg_thres.append(pos_sim_record.max())
+        elif config.thres_method == "fixed":
+            false_neg_thres.append(config.false_neg_thres)
+
+        # accept rate
+        if config.accept_rate_method == "linear":  # y = x
+            accept_rate = (pos_sim_record.mean() - neg_sim_record.mean())
+        elif config.accept_rate_method == "linear2x":  # y = 2x
+            accept_rate = 2 * (pos_sim_record.mean() - neg_sim_record.mean())
+        elif config.accept_rate_method == "linear0.5x":  # y = 0.5x
+            accept_rate = 0.5 * (pos_sim_record.mean() - neg_sim_record.mean())
+        elif config.accept_rate_method == "linear0.25x":  # y = 0.25x
+            accept_rate = 0.25 * (pos_sim_record.mean() - neg_sim_record.mean())
+        elif config.accept_rate_method == "linear0.1x":  # y = 0.1x
+            accept_rate = 0.1 * (pos_sim_record.mean() - neg_sim_record.mean())
+        elif config.accept_rate_method == "linear0.05x":  # y = 0.05x
+            accept_rate = 0.05 * (pos_sim_record.mean() - neg_sim_record.mean())
+        elif config.accept_rate_method == "linear0.01x":  # y = 0.01x
+            accept_rate = 0.01 * (pos_sim_record.mean() - neg_sim_record.mean())
+        elif config.accept_rate_method == "linear0x":  # y = 0x
+            accept_rate = 0.0 * (pos_sim_record.mean() - neg_sim_record.mean())
+        elif config.accept_rate_method == "exp":   # y = e^x - 1
+            accept_rate = torch.exp(pos_sim_record.mean() - neg_sim_record.mean()) - 1
+        elif config.accept_rate_method == "ln":    # y = ln(x + 1)
+            accept_rate = torch.log(pos_sim_record.mean() - neg_sim_record.mean() + 1)
+        elif config.accept_rate_method == "linear_baseline":
+            accept_rate = epoch / config.epochs
+        elif config.accept_rate_method == "all":
+            accept_rate = 1.0
         false_neg_accept_rate.append(accept_rate)
 
         num_t += num_target
@@ -251,7 +276,7 @@ def find_false_negative(
         neg_thres_mask = neg_thres_mask.bool()
         # only keep top-k% as false neg (k = false neg accept rate)
         if neg_thres_mask.sum() > 0:
-            K = round(int(max(accept_rate, 0) * neg_thres_mask.sum().item()))
+            K = round(int(min(max(accept_rate, 0), 1) * neg_thres_mask.sum().item()))
             topk_idx = neg_masked_fused_neg_sim[neg_thres_mask].topk(K, dim=0)[1]
             keep_mask = torch.zeros_like(neg_masked_fused_neg_sim[neg_thres_mask])
             keep_mask[topk_idx] = 1
@@ -266,44 +291,44 @@ def find_false_negative(
     false_neg_mask_iou = false_neg_mask_con[local_mask].reshape(S, P)   # [S, P]
 
     # record false neg info
-    false_neg_vid_list = []
-    false_neg_time_list = []
-    moments = mask2d.nonzero()                                          # [P, 2]
-    moments[:, 1] += 1                                                  # [P, 2]
-    moments = moments / N                                               # [P, 2]
-    record_false_neg_mask = false_neg_mask_con[record_sent_idx].reshape(B, P)
-    record_false_neg_idx = record_false_neg_mask.nonzero()              # [num_false_neg, 2]
-    for idx, false_neg in enumerate(record_false_neg_idx):
-        batch_idx, proposal_idx = false_neg
-        false_neg_vid_list.append(batch_info['vid'][batch_idx])
-        false_neg_time_list.append(
-            (moments[proposal_idx].cpu().detach().numpy() * batch_info['duration'][batch_idx].item()).tolist()
-        )
+    # false_neg_vid_list = []
+    # false_neg_time_list = []
+    # moments = mask2d.nonzero()                                          # [P, 2]
+    # moments[:, 1] += 1                                                  # [P, 2]
+    # moments = moments / N                                               # [P, 2]
+    # record_false_neg_mask = false_neg_mask_con[record_sent_idx].reshape(B, P)
+    # record_false_neg_idx = record_false_neg_mask.nonzero()              # [num_false_neg, 2]
+    # for idx, false_neg in enumerate(record_false_neg_idx):
+    #     batch_idx, proposal_idx = false_neg
+    #     false_neg_vid_list.append(batch_info['vid'][batch_idx])
+    #     false_neg_time_list.append(
+    #         (moments[proposal_idx].cpu().detach().numpy() * batch_info['duration'][batch_idx].item()).tolist()
+    #     )
 
     # Record some samples
-    if dist.is_main():
-        # record 1st sample of each batch
-        mean_pos_sim = pos_sim_record.mean().item()
-        max_neg_sim = neg_sim_record.max().item()
-        mean_neg_sim = neg_sim_record.mean().item()
-        min_neg_sim = neg_sim_record.min().item()
+    # if dist.is_main():
+    #     # record 1st sample of each batch
+    #     mean_pos_sim = pos_sim_record.mean().item()
+    #     max_neg_sim = neg_sim_record.max().item()
+    #     mean_neg_sim = neg_sim_record.mean().item()
+    #     min_neg_sim = neg_sim_record.min().item()
 
-        append_to_json_file(
-            os.path.join(config.logdir, "false_neg.json"),
-            {
-                'epoch': epoch,                             # int
-                'vid': batch_info['vid'][record_batch_idx],                # str
-                'query': batch_info['sentences'][record_batch_idx][0],
-                'sample_idx': batch_info['idx'][record_batch_idx].item(),         # int
-                'pos_sim': pos_sim_record.tolist(),                    # list[float], sim of all pos samples
-                'max_neg_sim': max_neg_sim,                   # float
-                'mean_neg_sim': mean_neg_sim,                 # float
-                'min_neg_sim': min_neg_sim,                   # float
-                'mean_gap': mean_pos_sim - mean_neg_sim,      # float, mean_pos_sim - mean_neg_sim
-                'false_neg_vid': false_neg_vid_list,          # list[str]
-                'false_neg_timestamps': false_neg_time_list,  # list[[float, float]]
-            }
-        )
+    #     append_to_json_file(
+    #         os.path.join(config.logdir, "false_neg.json"),
+    #         {
+    #             'epoch': epoch,                             # int
+    #             'vid': batch_info['vid'][record_batch_idx],                # str
+    #             'query': batch_info['sentences'][record_batch_idx][0],
+    #             'sample_idx': batch_info['idx'][record_batch_idx].item(),         # int
+    #             'pos_sim': pos_sim_record.tolist(),                    # list[float], sim of all pos samples
+    #             'max_neg_sim': max_neg_sim,                   # float
+    #             'mean_neg_sim': mean_neg_sim,                 # float
+    #             'min_neg_sim': min_neg_sim,                   # float
+    #             'mean_gap': mean_pos_sim - mean_neg_sim,      # float, mean_pos_sim - mean_neg_sim
+    #             'false_neg_vid': false_neg_vid_list,          # list[str]
+    #             'false_neg_timestamps': false_neg_time_list,  # list[[float, float]]
+    #         }
+    #     )
 
     return false_neg_mask_con, false_neg_mask_iou
 
@@ -666,7 +691,7 @@ def training_loop(config: AttrDict):
     dist.barrier()
 
     for epoch in range(1, config.epochs + 1):
-        # train_sampler.set_epoch(epoch)
+        train_sampler.set_epoch(epoch)
 
         # freeze BERT parameters for the first few epochs
         if epoch == config.bert_fire_start:
@@ -745,8 +770,9 @@ def training_loop(config: AttrDict):
                     "optimizer": optimizer.state_dict(),
                     "scheduler": scheduler.state_dict(),
                 }
-                path = os.path.join(config.logdir, f"last.pth")
-                torch.save(state, path)
+                # save last pth
+                # path = os.path.join(config.logdir, f"last.pth")
+                # torch.save(state, path)
 
                 # periodically save checkpoint
                 if epoch % config.save_freq == 0:
@@ -754,7 +780,8 @@ def training_loop(config: AttrDict):
                     torch.save(state, path)
 
                 # save best checkpoint
-                if test_recall[config.best_metric] > best_recall[config.best_metric]:
+                # if test_recall[config.best_metric] > best_recall[config.best_metric]:
+                if (test_multi_recall["R@(5/5),IoU=0.5"] + test_recall[config.best_metric]) > (best_multi_recall["R@(5/5),IoU=0.5"] + best_recall[config.best_metric]):
                     best_recall = test_recall
                     best_multi_recall = test_multi_recall
                     path = os.path.join(config.logdir, f"best.pth")
@@ -851,7 +878,8 @@ def training_loop(config: AttrDict):
                 # if val_recall[config.best_metric] > best_val_recall[config.best_metric]:
                 #     best_val_recall = val_recall
 
-                if test_recall[config.best_metric] > best_recall[config.best_metric]:
+                # if test_recall[config.best_metric] > best_recall[config.best_metric]:
+                if (test_multi_recall["R@(5/5),IoU=0.5"] + test_recall[config.best_metric]) > (best_multi_recall["R@(5/5),IoU=0.5"] + best_recall[config.best_metric]):
                     best_recall = test_recall
                     best_multi_recall = test_multi_recall
                     path = os.path.join(config.logdir, f"best.pth")

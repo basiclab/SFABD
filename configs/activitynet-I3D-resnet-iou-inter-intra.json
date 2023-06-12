@@ -15,7 +15,7 @@
     "conv2d_num_layers": 4,
     "joint_space_size": 256,
     "dual_space": true,
-    "resnet": 50,
+    "resnet": 18,
 
     "IoULoss": "src.losses.iou.ScaledIoULoss",
     "min_iou": 0.5,
@@ -38,13 +38,17 @@
     "intra_t": 0.1,
     "intra_m": 0.0,
     "intra_weight": 0.1,
+
     "do_augmentation": true,
-    "aug_prob": 0.75,
+    "aug_prob": 0.25,
     "downsampling_prob": 0.5,
     "mixup_alpha": 0.9,
     "aug_expand_rate": 1.0,
     "downsampling_method": "odd",
 
+    "thres_method": "mean",
+    "accept_rate_method": "linear",
+    
     "start_dns_epoch": 999,
 
     "epochs": 10,

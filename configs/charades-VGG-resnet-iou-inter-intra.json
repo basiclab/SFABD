@@ -45,7 +45,10 @@
     "aug_expand_rate": 1.0,
     "downsampling_method": "odd",
 
-    "epochs": 12,
+    "thres_method": "max",
+    "accept_rate_method": "linear",
+
+    "epochs": 10,
     "batch_size": 48,
     "base_lr": 1e-4,
     "bert_lr": 1e-5,

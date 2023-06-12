@@ -46,12 +46,14 @@
     "aug_expand_rate": 1.0,
     "downsampling_method": "odd",
 
+    "thres_method": "mean",
+    "accept_rate_method": "linear",
     "fusion_ratio": 0.5,
     "exponent": 2,
     "neg_samples_num": 512,
     "start_dns_epoch": 999,
 
-    "epochs": 9,
+    "epochs": 11,
     "batch_size": 48,
     "base_lr": 1e-4,
     "bert_lr": 1e-5,
