@@ -194,7 +194,7 @@ class MaskedResNet(nn.Module):
         block: Union[Type[BasicBlock], Type[BottleneckBlock]],
         planes: int,
         blocks: int,
-        stride: int = 1,  # always 1 here, do not downsample 2D map
+        stride: int = 1,  # always 1 here, we don't want to downsample 2D proposal map
     ) -> MaskedSequential:
         norm_layer = self.norm_layer
         downsample = None
@@ -225,7 +225,7 @@ class MaskedResNet(nn.Module):
         x = self.bn1(x)
         x = self.relu(x)
         # x: [bs, hidden, N, N]
-        # we don't need downsampling because we want to keep the N x N 2D map
+        # we don't need downsampling because we want to keep the N x N 2D proposal map
         x, mask = self.layer1(x, mask)
         x, mask = self.layer2(x, mask)
         x, mask = self.layer3(x, mask)

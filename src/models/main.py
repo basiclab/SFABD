@@ -28,7 +28,6 @@ def compute_scores(
     return scores2d
 
 
-# main embedding space
 def iou_scores(
     video_feats: torch.Tensor,              # [B, C, N, N]
     sents_feats: torch.Tensor,              # [S, C]
@@ -49,7 +48,6 @@ def iou_scores(
     return scores2d, logits2d
 
 
-# for 2nd embedding space
 def con_scores(
     video_feats: torch.Tensor,      # [B, C, N, N]
     sents_feats: torch.Tensor,      # [S, C]
@@ -81,7 +79,7 @@ class MMN(nn.Module):
         conv2d_kernel_size: int = 5,            # ProposalConv
         conv2d_num_layers: int = 8,             # ProposalConv
         joint_space_size: int = 256,
-        resnet: int = 50,
+        resnet: int = 18,
         dual_space: bool = False,               # whether to use dual feature space
     ):
         """
@@ -113,7 +111,7 @@ class MMN(nn.Module):
                     dual_space=dual_space,                      # [B, C, N, N]
                 ),
             )
-        # original ConvNet
+        # ConvNet in MMN paper
         else:
             self.video_model = nn.Sequential(
                 Conv1dPool(                                     # [B, C, NUM_INIT_CLIPS]
@@ -171,7 +169,6 @@ class MMN(nn.Module):
             con_scores2d = con_scores(
                 video_feats2, sents_feats2, mask2d)
             scores2d = torch.sqrt(con_scores2d) * iou_scores2d
-        # common embedding space
         else:
             scores2d, logits2d = iou_scores(
                 video_feats1, sents_feats1, mask2d)

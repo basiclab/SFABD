@@ -18,7 +18,6 @@ class CollateBase(torch.utils.data.Dataset):
         ann_file,
         do_augmentation=False,
         mixup_alpha=0.9,
-        aug_expand_rate=1.0,
         downsampling_method='odd',
         aug_prob=0.75,
         downsampling_prob=0.5,
@@ -28,7 +27,6 @@ class CollateBase(torch.utils.data.Dataset):
         self.annos = self.parse_anno(ann_file)
         self.do_augmentation = do_augmentation
         self.mixup_alpha = mixup_alpha
-        self.aug_expand_rate = aug_expand_rate
         self.downsampling_method = downsampling_method
         self.aug_prob = aug_prob
         self.downsampling_prob = downsampling_prob
@@ -55,7 +53,7 @@ class CollateBase(torch.utils.data.Dataset):
             tgt_moments = []
             num_targets = []
             qids = []
-            # TODO: sample at most k samples to prevent large VRAM usage
+            # Sample at most k samples to prevent large VRAM usage caused by augmentation
             k = 7
             if len(video_data['annotations']) > k:
                 sampled_annos = random.sample(video_data['annotations'], k)
@@ -107,10 +105,6 @@ class CollateBase(torch.utils.data.Dataset):
         elif method == 'avg_pooling':
             video_feats = F.avg_pool1d(video_feats.t(), 2, 2, ceil_mode=True).t()   # [ceil(seq_len / 2), feat_dim]
 
-        # might be useless because we use MMN?
-        elif method == 'max_pooling':
-            video_feats = F.max_pool1d(video_feats.t(), 2, 2, ceil_mode=True).t()   # [ceil(seq_len / 2), feat_dim]
-
         elif method == 'None':
             pass
 
@@ -130,7 +124,7 @@ class CollateBase(torch.utils.data.Dataset):
             'tgt_moments': tensor([[0.1850, 0.4385],
                                    [0.1850, 0.4385]]),
             'duration': tensor(29.1900),
-            'qids': tensor([0, 0])
+            'qids': tensor([0, 0]) # Placeholder for QVHighlights test server evaluation
         }
         video_feats: [num_sent, seq_len, feat_dim]
         '''
@@ -138,15 +132,14 @@ class CollateBase(torch.utils.data.Dataset):
         new_num_targets = []
         new_tgt_moments = []
         for idx, num_target in enumerate(anno['num_targets']):
-            # x% chance to do augmentation for each query-moments sample pair
-            # 1 - x% to not do augmentation
-            if random.random() > self.aug_prob:  # ex. if aug_prob = 75%, then 25% not do augmentation
+            if random.random() > self.aug_prob:
+                # Don't do augmentation
                 new_num_targets.append(num_target)
                 new_tgt_moments.append(anno['tgt_moments'][shift_t:shift_t + num_target])
                 shift_t += num_target
                 continue
 
-            # Step 1: Find all empty clips in video for each query
+            # Find all empty clips in video for each query
             tgt_moments = anno['tgt_moments'][shift_t:shift_t + num_target]     # [num_target, 2]
             # sort moments by the starting time
             sorted_moments = sorted(tgt_moments, key=lambda x: x[0])
@@ -156,32 +149,35 @@ class CollateBase(torch.utils.data.Dataset):
                 if (moment[0] - start_time) > 0:
                     empty_clips.append([start_time, moment[0]])
                 start_time = moment[1]
-            # ending empty clip
+            # the last empty clip at the end
             if (torch.tensor(1.0) - start_time) > 0.0001:
                 empty_clips.append([start_time, torch.tensor(1.0)])
             empty_clips_len = torch.tensor(([clip[1] - clip[0] for clip in empty_clips]))
-            # no place to do augmentation
+
             if len(empty_clips_len) == 0:
+                # no empty clips to do augmentation
                 new_num_targets.append(num_target)
                 new_tgt_moments.append(anno['tgt_moments'][shift_t:shift_t + num_target])
                 shift_t += num_target
                 continue
 
-            # x% do downsampling
             if random.random() < self.downsampling_prob:
-                mask = [(empty_clips_len > (tgt_moment[1] - tgt_moment[0]) * self.aug_expand_rate / 2).any()
+                # Do downsampling to half the moment length
+                mask = [(empty_clips_len > (tgt_moment[1] - tgt_moment[0]) / 2).any()
                         for tgt_moment in tgt_moments]
                 mask = torch.tensor(mask).float()
+
                 # check if any target can do augmentation
                 if (mask > 0).any():
-                    # sample one target to do augmentation
+                    # Do augmentation
+                    # Sample one target to do augmentation
                     do_aug_target_idx = torch.multinomial(mask, 1, replacement=False)
                     do_aug_target_moment = tgt_moments[do_aug_target_idx].squeeze()
                     do_aug_target_len = do_aug_target_moment[1] - do_aug_target_moment[0]
-                    # final aug target len
-                    final_aug_target_len = (do_aug_target_len * self.aug_expand_rate) / 2
+                    # Final aug target len after downsampling
+                    final_aug_target_len = do_aug_target_len / 2
 
-                    # Step 2: Find all available augmentation timestamp
+                    # Find all available augmentation timestamp
                     possible_start_time = []
                     for empty_clip, empty_clip_len in zip(empty_clips, empty_clips_len):
                         if final_aug_target_len < empty_clip_len:
@@ -191,35 +187,35 @@ class CollateBase(torch.utils.data.Dataset):
                                 0.02
                             ):
                                 possible_start_time.append(torch.tensor(start_time, dtype=torch.float32))
-                    # check for empty possible_start_time
+
+                    # Check for empty possible_start_time
                     if len(possible_start_time) == 0:
                         new_num_targets.append(num_target)
                         new_tgt_moments.append(anno['tgt_moments'][shift_t:shift_t + num_target])
                         shift_t += num_target
                         continue
 
-                    # sample from the all possible start index to do augmentation
+                    # Sample from the all possible start index to do augmentation
                     aug_start = random.choice(possible_start_time)
                     aug_end = aug_start + final_aug_target_len
-
-                    # Do video_feat mixup
                     seq_len = video_feats[idx].shape[-2]
-                    # target
-                    target_seq_start_idx = int(seq_len * (do_aug_target_moment[0] - (self.aug_expand_rate - 1) / 2 * do_aug_target_len))
+
+                    # Target moment
+                    target_seq_start_idx = int(seq_len * do_aug_target_moment[0])
                     target_seq_start_idx = max(0, min(target_seq_start_idx, seq_len - 2))
-                    target_seq_end_idx = int(seq_len * (do_aug_target_moment[1] + (self.aug_expand_rate - 1) / 2 * do_aug_target_len))
+                    target_seq_end_idx = int(seq_len * do_aug_target_moment[1])
                     target_seq_end_idx = max(1, min(target_seq_end_idx, seq_len - 1))
                     target_seq_len = target_seq_end_idx - target_seq_start_idx
 
-                    # aug: len = target_len / 2 for even seq_len number
+                    # Augmented moment: len = target_len / 2
                     aug_seq_start_idx = int(seq_len * aug_start)
                     aug_seq_start_idx = max(0, min(aug_seq_start_idx, seq_len - 2))
                     aug_seq_end_idx = int(seq_len * aug_end)
                     aug_seq_end_idx = max(1, min(aug_seq_end_idx, seq_len - 1))
                     aug_seq_len = aug_seq_end_idx - aug_seq_start_idx
 
-                    # self.downsample will return ceil(seq / 2)
-                    # make sure the aug_seq_len = ceil(target_seq_len / 2)
+                    # self.downsample will return ceil(target_seq_len / 2)
+                    # Make sure the aug_seq_len = ceil(target_seq_len / 2)
                     if aug_seq_len != math.ceil(target_seq_len / 2):
                         aug_seq_end_idx = aug_seq_start_idx + math.ceil(target_seq_len / 2)
                         aug_seq_len = math.ceil(target_seq_len / 2)
@@ -228,32 +224,32 @@ class CollateBase(torch.utils.data.Dataset):
                         if aug_seq_end_idx == seq_len:
                             aug_seq_end_idx = aug_seq_end_idx - 1
                             aug_seq_start_idx = aug_seq_start_idx - 1
-                            # raise ValueError("Aug seq end idx == seq_len")
 
-                    # mixup
+                    # Feature-level mixup
                     mixup_feat = self.downsample(
                         self.mixup_alpha * video_feats[idx][target_seq_start_idx:target_seq_end_idx],
                         self.downsampling_method,
                     ) + (1 - self.mixup_alpha) * video_feats[idx][aug_seq_start_idx:aug_seq_end_idx]
+
                     # Normalize for cosine similarity
                     video_feats[idx][aug_seq_start_idx:aug_seq_end_idx] = F.normalize(mixup_feat.contiguous(), dim=-1)
 
-                    # update anno (num_targets, tgt_moments) and video_feats
+                    # Add the augmented moment as pseudo-label
                     new_num_targets.append(num_target + 1)
-                    actual_aug_start = aug_start + (self.aug_expand_rate - 1) / 2 * do_aug_target_len
-                    actual_aug_end = aug_end - (self.aug_expand_rate - 1) / 2 * do_aug_target_len
                     new_tgt_moments.append(
-                        torch.cat([tgt_moments, torch.tensor([[actual_aug_start, actual_aug_end]])], dim=0)
+                        torch.cat([tgt_moments, torch.tensor([[aug_start, aug_end]])], dim=0)
                     )
                     shift_t += num_target
 
-                else:   # do augmentation but no proper empty clip
+                else:
+                    # No proper empty clip for augmentation
                     new_num_targets.append(num_target)
                     new_tgt_moments.append(anno['tgt_moments'][shift_t:shift_t + num_target])
                     shift_t += num_target
 
-            else:   # no downsample
-                mask = [(empty_clips_len > (tgt_moment[1] - tgt_moment[0]) * self.aug_expand_rate).any()
+            else:
+                # Don't do downsampling
+                mask = [(empty_clips_len > (tgt_moment[1] - tgt_moment[0])).any()
                         for tgt_moment in tgt_moments]
                 mask = torch.tensor(mask).float()     # [0, 1, 0, ...]
 
@@ -263,7 +259,7 @@ class CollateBase(torch.utils.data.Dataset):
                     do_aug_target_idx = torch.multinomial(mask, 1, replacement=False)
                     do_aug_target_moment = tgt_moments[do_aug_target_idx].squeeze()
                     do_aug_target_len = do_aug_target_moment[1] - do_aug_target_moment[0]
-                    final_aug_target_len = do_aug_target_len * self.aug_expand_rate
+                    final_aug_target_len = do_aug_target_len
                     # find all available augmentation timestamp
                     possible_start_time = []
                     for empty_clip, empty_clip_len in zip(empty_clips, empty_clips_len):
@@ -274,6 +270,7 @@ class CollateBase(torch.utils.data.Dataset):
                                 0.02
                             ):
                                 possible_start_time.append(torch.tensor(start_time, dtype=torch.float32))
+
                     # check for empty possible_start_time
                     if len(possible_start_time) == 0:
                         new_num_targets.append(num_target)
@@ -284,17 +281,16 @@ class CollateBase(torch.utils.data.Dataset):
                     # sample from the all possible start index to do augmentation
                     aug_start = random.choice(possible_start_time)
                     aug_end = aug_start + final_aug_target_len
-
-                    # Do video_feat mixup
                     seq_len = video_feats[idx].shape[-2]
-                    # target
-                    target_seq_start_idx = int(seq_len * (do_aug_target_moment[0] - (self.aug_expand_rate - 1) / 2 * do_aug_target_len))
+
+                    # Target moment
+                    target_seq_start_idx = int(seq_len * do_aug_target_moment[0])
                     target_seq_start_idx = max(0, min(target_seq_start_idx, seq_len - 2))
-                    target_seq_end_idx = int(seq_len * (do_aug_target_moment[1] + (self.aug_expand_rate - 1) / 2 * do_aug_target_len))
+                    target_seq_end_idx = int(seq_len * do_aug_target_moment[1])
                     target_seq_end_idx = max(1, min(target_seq_end_idx, seq_len - 1))
                     target_seq_len = target_seq_end_idx - target_seq_start_idx
 
-                    # aug
+                    # Augmented moment
                     aug_seq_start_idx = int(seq_len * aug_start)
                     aug_seq_start_idx = max(0, min(aug_seq_start_idx, seq_len - 2))
                     aug_seq_end_idx = aug_seq_start_idx + target_seq_len
@@ -302,34 +298,34 @@ class CollateBase(torch.utils.data.Dataset):
                     aug_seq_len = aug_seq_end_idx - aug_seq_start_idx
 
                     final_seq_len = min(target_seq_len, aug_seq_len)
-                    # make sure the length is the same
+                    # Make sure the length is the same
                     if target_seq_len > final_seq_len:
                         target_seq_end_idx = target_seq_start_idx + final_seq_len
                     elif aug_seq_len > final_seq_len:
                         aug_seq_end_idx = aug_seq_start_idx + final_seq_len
                     assert (aug_seq_end_idx - aug_seq_start_idx) == (target_seq_end_idx - target_seq_start_idx)
 
-                    # mixup
+                    # Feature-level mixup
                     mixup_feat = self.mixup_alpha * video_feats[idx][target_seq_start_idx:target_seq_end_idx] \
                         + (1 - self.mixup_alpha) * video_feats[idx][aug_seq_start_idx:aug_seq_end_idx]
+
                     # Normalize for cosine similarity
                     video_feats[idx][aug_seq_start_idx:aug_seq_end_idx] = F.normalize(mixup_feat.contiguous(), dim=-1)
 
-                    # update anno (num_targets, tgt_moments) and video_feats
+                    # Add the augmented moment as pseudo-label
                     new_num_targets.append(num_target + 1)
-                    actual_aug_start = aug_start + (self.aug_expand_rate - 1) / 2 * do_aug_target_len
-                    actual_aug_end = aug_end - (self.aug_expand_rate - 1) / 2 * do_aug_target_len
                     new_tgt_moments.append(
-                        torch.cat([tgt_moments, torch.tensor([[actual_aug_start, actual_aug_end]])], dim=0)
+                        torch.cat([tgt_moments, torch.tensor([[aug_start, aug_end]])], dim=0)
                     )
                     shift_t += num_target
 
-                else:   # do augmentation but no proper empty clip
+                else:
+                    # No proper empty clip for augmentation
                     new_num_targets.append(num_target)
                     new_tgt_moments.append(anno['tgt_moments'][shift_t:shift_t + num_target])
                     shift_t += num_target
 
-        # update annotation
+        # Update annotation
         anno['num_targets'] = torch.tensor(new_num_targets)
         anno['tgt_moments'] = torch.cat(new_tgt_moments, dim=0)
 
@@ -353,10 +349,10 @@ class CollateBase(torch.utils.data.Dataset):
         '''
         anno = self.annos[idx]
         video_feats = self.get_feat(anno)   # [seq_len, dim]
-        # duplicate video feats for each query, anno['num_sentences'] times
+        # Duplicate video feats for each query, anno['num_sentences'] times for augmentation
         video_feats = video_feats.unsqueeze(0).repeat(
             anno['num_sentences'], 1, 1
-        )                                    # [num_sent, seq_len, feat_dim]
+        )                                   # [num_sent, seq_len, feat_dim]
 
         if self.do_augmentation:
             anno, video_feats = self.augmentation(anno, video_feats)
@@ -395,11 +391,9 @@ class CollateBase(torch.utils.data.Dataset):
                     0, pad_len - video_feats.shape[1]   # for dim = -2
                 ]
             )
-        # for i, video_feat in enumerate(batch['video_feats']):
-        #     print(f"{i}, :{video_feat.shape}")
         video_masks = torch.arange(pad_len)[None, :] < video_lens[:, None]
 
-        # return batch, info
+        # Return batch, info
         return {
             'video_feats': torch.cat(batch['video_feats'], dim=0),        # [num_sents, max_seq_len, feat_dim]
             'video_masks': video_masks,                                   # [num_sents, max_seq_len]
@@ -409,10 +403,10 @@ class CollateBase(torch.utils.data.Dataset):
             'num_targets': torch.cat(batch['num_targets'], dim=0),        # [num_targets]
             'tgt_moments': torch.cat(batch['tgt_moments'], dim=0),        # [num_targets, 2]
         }, {
-            'qids': batch['qids'],
+            'qids': batch['qids'],              # Placeholder for QVHighlights test server evaluation
             'sentences': batch['sentences'],
             'vid': batch['vid'],
-            'idx': torch.cat(batch['idx']),     # sample idx for each query [S]
+            'idx': torch.cat(batch['idx']),     # Sample idx for each query [S]
             'duration': batch['duration'],
         }
 

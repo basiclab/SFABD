@@ -14,17 +14,17 @@ from torch.utils.data import DataLoader, DistributedSampler
 from tqdm import tqdm
 
 import src.dist as dist
-from src.evaluation import calculate_recall, calculate_multi_recall, calculate_mAPs, calculate_mAPs_no_mean, recall_name
+from src.evaluation import calculate_recall, calculate_multi_recall, calculate_mAPs
 from src.misc import print_metrics, print_recall, print_mAPs, print_multi_recall, construct_class
 from src.models.main import MMN
 from src.utils import nms, scores2ds_to_moments, moments_to_iou2ds, iou2ds_to_iou2d, plot_moments_on_iou2d
 
 
-def qv_testing_loop(config):
+def qv_generate_submission(config):
     device = dist.get_device()
 
     # val Dataset and DataLoader
-    val_dataset = construct_class("src.datasets.qvhighlights.QVHighlightsVal2s")
+    val_dataset = construct_class("src.datasets.qvhighlights.QVHighlightsVal")
     val_sampler = DistributedSampler(val_dataset, shuffle=False, seed=config.seed)
     val_loader = DataLoader(
         dataset=val_dataset,
@@ -35,7 +35,7 @@ def qv_testing_loop(config):
     )
 
     # test Dataset and DataLoader
-    test_dataset = construct_class("src.datasets.qvhighlights.QVHighlightsTest2s")
+    test_dataset = construct_class("src.datasets.qvhighlights.QVHighlightsTest")
     test_sampler = DistributedSampler(test_dataset, shuffle=False, seed=config.seed)
     test_loader = DataLoader(
         dataset=test_dataset,
@@ -47,6 +47,7 @@ def qv_testing_loop(config):
 
     # model
     model_local = MMN(
+        backbone=config.backbone,
         num_init_clips=config.num_init_clips,
         feat1d_in_channel=test_dataset.get_feat_dim(),
         feat1d_out_channel=config.feat1d_out_channel,
@@ -57,6 +58,7 @@ def qv_testing_loop(config):
         conv2d_kernel_size=config.conv2d_kernel_size,
         conv2d_num_layers=config.conv2d_num_layers,
         joint_space_size=config.joint_space_size,
+        resnet=config.resnet,
         dual_space=config.dual_space,
     ).to(device)
     # load from checkpoint
@@ -75,20 +77,19 @@ def qv_testing_loop(config):
     pbar = tqdm(val_loader, ncols=0, leave=False, desc="Inferencing val set")
     for batch, batch_info in pbar:
         batch = {key: value.to(device) for key, value in batch.items()}
-        with torch.no_grad():
-            *_, scores2d, mask2d = model(**batch)
-
-        out_moments, out_scores1ds = scores2ds_to_moments(scores2d, mask2d)
-        pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
-        pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
-        pred_moments.append(pred_moments_batch)
-
         true_moments_batch = {
             'tgt_moments': batch['tgt_moments'],
             'num_targets': batch['num_targets'],
         }
         true_moments_batch = dist.gather_dict(true_moments_batch, to_cpu=True)
         true_moments.append(true_moments_batch)
+
+        with torch.no_grad():
+            *_, scores2ds, mask2d = model(**batch)
+        out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
+        pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
+        pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
+        pred_moments.append(pred_moments_batch)
 
         assert len(batch_info['qids']) == len(batch_info['sentences']) == len(batch_info['vid']) == len(batch_info['duration'])
         shift = 0
@@ -130,20 +131,19 @@ def qv_testing_loop(config):
     pbar = tqdm(test_loader, ncols=0, leave=False, desc="Inferencing test set")
     for batch, batch_info in pbar:
         batch = {key: value.to(device) for key, value in batch.items()}
-        with torch.no_grad():
-            *_, scores2d, mask2d = model(**batch)
-
-        out_moments, out_scores1ds = scores2ds_to_moments(scores2d, mask2d)
-        pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
-        pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
-        pred_moments.append(pred_moments_batch)
-
         true_moments_batch = {
             'tgt_moments': batch['tgt_moments'],
             'num_targets': batch['num_targets'],
         }
         true_moments_batch = dist.gather_dict(true_moments_batch, to_cpu=True)
         true_moments.append(true_moments_batch)
+
+        with torch.no_grad():
+            *_, scores2ds, mask2d = model(**batch)
+        out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
+        pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
+        pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
+        pred_moments.append(pred_moments_batch)
 
         assert len(batch_info['qids']) == len(batch_info['sentences']) == len(batch_info['vid']) == len(batch_info['duration'])
         shift = 0
@@ -231,20 +231,17 @@ def testing_loop(config):
         model, device_ids=[device], find_unused_parameters=True)
     model.eval()
 
+    # plot interval
+    plot_interval = 100
+
     if "qv" in config.TestDataset:
         pred_moments = []
         true_moments = []
-        nms_thres = np.arange(0.1, 1, 0.1)   # [0.2, ..., 0.9]
-        nms_thres = [round(nms_t, 2) for nms_t in nms_thres]
-        pred_moments_nms_list = [[] for _ in range(len(nms_thres))]
         sample_id = 0
         plot_dir = os.path.join(config.logdir, "plots")
         os.makedirs(plot_dir, exist_ok=True)
         for batch, batch_info in tqdm(test_loader, ncols=0, leave=False, desc="Inferencing"):
             batch = {key: value.to(device) for key, value in batch.items()}
-            with torch.no_grad():
-                *_, scores2ds, mask2d = model(**batch)
-
             true_moments_batch = {
                 'tgt_moments': batch['tgt_moments'],
                 'num_targets': batch['num_targets'],    # [S]
@@ -252,105 +249,45 @@ def testing_loop(config):
             true_moments_batch = dist.gather_dict(true_moments_batch, to_cpu=True)
             true_moments.append(true_moments_batch)
 
+            with torch.no_grad():
+                *_, scores2ds, mask2d = model(**batch)
             out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
             pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
             pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
             pred_moments.append(pred_moments_batch)
 
             # ploting batch
-            iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips)          # [M, N, N]
-            iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])                       # [S, N, N], separate to combined
-            iou2d = iou2d.detach().cpu()
-            shift = 0
-            for batch_idx, scores2d in enumerate(scores2ds.cpu()):
-                # nms(pred)
-                num_proposals = pred_moments_batch['num_proposals'][batch_idx]
-                nms_moments = pred_moments_batch["out_moments"][shift: shift + num_proposals]  # [num_proposals, 2]
-                nms_moments = (nms_moments * config.num_clips).round().long()
-                plot_path = os.path.join(
-                    plot_dir,
-                    f"{sample_id:05d}.jpg"
-                )
-                if sample_id % 50 == 0:
-                    plot_moments_on_iou2d(
-                        iou2d[batch_idx], scores2d, nms_moments, plot_path
-                    )
-                shift = shift + num_proposals
-                sample_id += 1
+            # iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips)          # [M, N, N]
+            # iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])                       # [S, N, N], separate to combined
+            # iou2d = iou2d.detach().cpu()
+            # shift = 0
+            # for batch_idx, scores2d in enumerate(scores2ds.cpu()):
+            #     num_proposals = pred_moments_batch['num_proposals'][batch_idx]
+            #     nms_moments = pred_moments_batch["out_moments"][shift: shift + num_proposals]  # [num_proposals, 2]
+            #     nms_moments = (nms_moments * config.num_clips).round().long()
+            #     plot_path = os.path.join(
+            #         plot_dir,
+            #         f"{sample_id:05d}.jpg"
+            #     )
+            #     if sample_id % plot_interval == 0:
+            #         plot_moments_on_iou2d(
+            #             iou2d[batch_idx], scores2d, nms_moments, plot_path
+            #         )
+            #     shift = shift + num_proposals
+            #     sample_id += 1
 
-            for idx, nms_t in enumerate(nms_thres):
-                pred_moments_batch = nms(out_moments, out_scores1ds, nms_t)
-                pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)  # dict
-                pred_moments_nms_list[idx].append(pred_moments_batch)  # list of dict
-
-        # original mAP_avg
-        sample_mAPs, _ = calculate_mAPs_no_mean(pred_moments, true_moments, max_proposals=10)
-        print(f"Original mAP_avg:{round(sample_mAPs.mean().item() * 100, 2)}")
-
-        sample_mAPs_list = []
-        for idx, pred_moments in enumerate(pred_moments_nms_list):
-            sample_mAPs, num_targets = calculate_mAPs_no_mean(pred_moments, true_moments, max_proposals=10)
-            sample_mAPs_list.append(sample_mAPs)
-        sample_mAPs_to_nms_t = torch.stack(sample_mAPs_list, dim=1)  # [1550, num_nms_t]
-
-        # filter some mAP results
-        mask = torch.ones(sample_mAPs_to_nms_t.shape[0])
-        for idx, mAPs_to_nms_t in enumerate(sample_mAPs_to_nms_t):
-            if all(element == mAPs_to_nms_t[0] for element in mAPs_to_nms_t):
-                mask[idx] = 0
-            # if (max(mAPs_to_nms_t) - min(mAPs_to_nms_t)) <= 0.01:
-            #     mask[idx] = 0
-
-        # save sample_mAPs_to_nms_t as csv
-        with open('nms.csv', 'w', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerow([''] + nms_thres + ['mask'])
-            for idx, mAPs_to_nms_t in enumerate(sample_mAPs_to_nms_t):
-                writer.writerow([f"{idx}"] + mAPs_to_nms_t.tolist() + [mask[idx].item()])
-
-        # ideal mAP results
-        max_mAPs, max_nms_idxs = torch.max(sample_mAPs_to_nms_t, dim=1)
-        ideal_nms_t_result = sample_mAPs_to_nms_t[range(sample_mAPs_to_nms_t.shape[0]), max_nms_idxs.long()]
-        print(f"ideal_nms_t_result:{round(ideal_nms_t_result.mean().item() * 100, 2)}")
-
-        sample_mAPs_to_nms_t = sample_mAPs_to_nms_t[mask.bool()]
-        print(f"filtered sample_mAPs:{sample_mAPs_to_nms_t.shape}")
-        max_mAPs, max_nms_idxs = torch.max(sample_mAPs_to_nms_t, dim=1)
-
-        plot_value = torch.zeros(max(num_targets), len(nms_thres))   # ex. [25, 8]
-        for idx, (num_target, max_mAP) in enumerate(zip(num_targets, max_mAPs)):
-            for element_idx, element in enumerate(sample_mAPs_to_nms_t[idx]):
-                if element == max_mAP:
-                    plot_value[num_target - 1, element_idx] += 1
-
-        with open('nms_count.csv', 'w', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerow([''] + nms_thres)
-            multi_sum = torch.zeros_like(plot_value[0])
-            for idx, best_nms_count in enumerate(plot_value):
-                num_target = idx + 1
-                writer.writerow([f'{num_target}'] + best_nms_count.tolist())
-                if idx == 0:
-                    single = best_nms_count
-                else:
-                    multi_sum += best_nms_count
-            writer.writerow(['Single_target'] + single.tolist())
-            writer.writerow(['Multi_target'] + multi_sum.tolist())
+        test_mAPs = calculate_mAPs(pred_moments, true_moments)
+        print_mAPs(test_mAPs)
 
     elif "charades" in config.TestDataset:
-        # Testing set
+        plot_dir = os.path.join(config.logdir, "plots")
+        os.makedirs(plot_dir, exist_ok=True)
+
+        # Single-Target Testing set
         pred_moments = []
         true_moments = []
         for batch, batch_info in tqdm(test_loader, ncols=0, leave=False, desc="Inferencing Testing set"):
             batch = {key: value.to(device) for key, value in batch.items()}
-            with torch.no_grad():
-                *_, scores2d, mask2d = model(**batch)
-
-            out_moments, out_scores1ds = scores2ds_to_moments(scores2d, mask2d)
-            pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
-            pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
-            pred_moments.append(pred_moments_batch)
-
             true_moments_batch = {
                 'tgt_moments': batch['tgt_moments'],
                 'num_targets': batch['num_targets'],    # [S]
@@ -358,60 +295,109 @@ def testing_loop(config):
             true_moments_batch = dist.gather_dict(true_moments_batch, to_cpu=True)
             true_moments.append(true_moments_batch)
 
-        recall = calculate_recall(
-            pred_moments, true_moments,
-            config.recall_Ns, config.recall_IoUs
-        )
-        print(f"Testing set")
-        print_recall(recall)
-
-        # Multi-Testing set
-        pred_moments = []
-        true_moments = []
-        for batch, batch_info in tqdm(multi_test_loader, ncols=0, leave=False, desc="Inferencing Multi-test set"):
-            batch = {key: value.to(device) for key, value in batch.items()}
             with torch.no_grad():
-                *_, scores2d, mask2d = model(**batch)
-
-            out_moments, out_scores1ds = scores2ds_to_moments(scores2d, mask2d)
+                *_, scores2ds, mask2d = model(**batch)
+            out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
             pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
             pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
             pred_moments.append(pred_moments_batch)
 
+            # ploting batch
+            # iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips)          # [M, N, N]
+            # iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])                       # [S, N, N], separate to combined
+            # iou2d = iou2d.detach().cpu()
+            # shift = 0
+            # for batch_idx, scores2d in enumerate(scores2ds.cpu()):
+            #     num_proposals = pred_moments_batch['num_proposals'][batch_idx]
+            #     nms_moments = pred_moments_batch["out_moments"][shift: shift + num_proposals]  # [num_proposals, 2]
+            #     nms_moments = (nms_moments * config.num_clips).round().long()
+            #     plot_path = os.path.join(
+            #         plot_dir,
+            #         f"{sample_id:05d}.jpg"
+            #     )
+            #     if sample_id % plot_interval == 0:
+            #         plot_moments_on_iou2d(
+            #             iou2d[batch_idx], scores2d, nms_moments, plot_path
+            #         )
+            #     shift = shift + num_proposals
+            #     sample_id += 1
+
+        recall = calculate_recall(
+            pred_moments, true_moments,
+            config.recall_Ns, config.recall_IoUs
+        )
+        print(f"Single-Target Testing Set")
+        print_recall(recall)
+
+        # Multi-Testing Testing Set
+        pred_moments = []
+        true_moments = []
+        for batch, batch_info in tqdm(multi_test_loader, ncols=0, leave=False, desc="Inferencing Multi-test set"):
+            batch = {key: value.to(device) for key, value in batch.items()}
             true_moments_batch = {
                 'tgt_moments': batch['tgt_moments'],
                 'num_targets': batch['num_targets'],
             }
             true_moments_batch = dist.gather_dict(true_moments_batch, to_cpu=True)
             true_moments.append(true_moments_batch)
+
+            with torch.no_grad():
+                *_, scores2ds, mask2d = model(**batch)
+            out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
+            pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
+            pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
+            pred_moments.append(pred_moments_batch)
+
+            # ploting batch
+            # iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips)          # [M, N, N]
+            # iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])                       # [S, N, N], separate to combined
+            # iou2d = iou2d.detach().cpu()
+            # shift = 0
+            # for batch_idx, scores2d in enumerate(scores2ds.cpu()):
+            #     num_proposals = pred_moments_batch['num_proposals'][batch_idx]
+            #     nms_moments = pred_moments_batch["out_moments"][shift: shift + num_proposals]  # [num_proposals, 2]
+            #     nms_moments = (nms_moments * config.num_clips).round().long()
+            #     plot_path = os.path.join(
+            #         plot_dir,
+            #         f"{sample_id:05d}.jpg"
+            #     )
+            #     if sample_id % plot_interval == 0:
+            #         plot_moments_on_iou2d(
+            #             iou2d[batch_idx], scores2d, nms_moments, plot_path
+            #         )
+            #     shift = shift + num_proposals
+            #     sample_id += 1
 
         multi_test_recall = calculate_multi_recall(
             pred_moments, true_moments,
             [5,], config.recall_IoUs
         )
-        print(f"Multi test set")
+        print(f"Multi-Target Testing Set")
         print_multi_recall(multi_test_recall)
 
     elif "activity" in config.TestDataset:
-        # Testing set
+        plot_dir = os.path.join(config.logdir, "plots")
+        os.makedirs(plot_dir, exist_ok=True)
+
+        # Single-Target Testing set
         pred_moments = []
         true_moments = []
+        sample_id = 0
         for batch, batch_info in tqdm(test_loader, ncols=0, leave=False, desc="Inferencing Testing set"):
             batch = {key: value.to(device) for key, value in batch.items()}
-            with torch.no_grad():
-                *_, scores2d, mask2d = model(**batch)
-
-            out_moments, out_scores1ds = scores2ds_to_moments(scores2d, mask2d)
-            pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
-            pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
-            pred_moments.append(pred_moments_batch)
-
             true_moments_batch = {
                 'tgt_moments': batch['tgt_moments'],
                 'num_targets': batch['num_targets'],
             }
             true_moments_batch = dist.gather_dict(true_moments_batch, to_cpu=True)
             true_moments.append(true_moments_batch)
+
+            with torch.no_grad():
+                *_, scores2ds, mask2d = model(**batch)
+            out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
+            pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
+            pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
+            pred_moments.append(pred_moments_batch)
 
         recall = calculate_recall(
             pred_moments, true_moments,
@@ -420,25 +406,43 @@ def testing_loop(config):
         print(f"Testing set")
         print_recall(recall)
 
-        # Multi-Testing set
+        # Multi-Target Testing Set
         pred_moments = []
         true_moments = []
         for batch, batch_info in tqdm(multi_test_loader, ncols=0, leave=False, desc="Inferencing Multi-test set"):
             batch = {key: value.to(device) for key, value in batch.items()}
-            with torch.no_grad():
-                *_, scores2d, mask2d = model(**batch)
-
-            out_moments, out_scores1ds = scores2ds_to_moments(scores2d, mask2d)
-            pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
-            pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
-            pred_moments.append(pred_moments_batch)
-
             true_moments_batch = {
                 'tgt_moments': batch['tgt_moments'],
                 'num_targets': batch['num_targets'],
             }
             true_moments_batch = dist.gather_dict(true_moments_batch, to_cpu=True)
             true_moments.append(true_moments_batch)
+
+            with torch.no_grad():
+                *_, scores2ds, mask2d = model(**batch)
+            out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
+            pred_moments_batch = nms(out_moments, out_scores1ds, config.nms_threshold)
+            pred_moments_batch = dist.gather_dict(pred_moments_batch, to_cpu=True)
+            pred_moments.append(pred_moments_batch)
+
+            # iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips)          # [M, N, N]
+            # iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])                       # [S, N, N], separate to combined
+            # iou2d = iou2d.detach().cpu()
+            # shift = 0
+            # for batch_idx, scores2d in enumerate(scores2ds.cpu()):
+            #     num_proposals = pred_moments_batch['num_proposals'][batch_idx]
+            #     nms_moments = pred_moments_batch["out_moments"][shift: shift + num_proposals]  # [num_proposals, 2]
+            #     nms_moments = (nms_moments * config.num_clips).round().long()
+            #     plot_path = os.path.join(
+            #         plot_dir,
+            #         f"{sample_id:05d}.jpg"
+            #     )
+            #     if sample_id % plot_interval == 0:
+            #         plot_moments_on_iou2d(
+            #             iou2d[batch_idx], scores2d, nms_moments, plot_path
+            #         )
+            #     shift = shift + num_proposals
+            #     sample_id += 1
 
         multi_test_recall = calculate_multi_recall(
             pred_moments, true_moments,

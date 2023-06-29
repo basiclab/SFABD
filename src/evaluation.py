@@ -1,4 +1,5 @@
 from typing import List, Dict
+import json
 
 import torch
 from tqdm import tqdm
@@ -50,10 +51,10 @@ def calculate_recall(
 ) -> Dict[str, float]:
     """
     Returns: {
-        "R@1,IoU0.5": 0.64,
-        "R@1,IoU0.7": 0.47,
-        "R@5,IoU0.5": 0.56,
-        "R@5,IoU0.7": 0.83,
+        "R@1,IoU0.5": 0.xx,
+        "R@1,IoU0.7": 0.xx,
+        "R@5,IoU0.5": 0.xx,
+        "R@5,IoU0.7": 0.xx,
         ...
     }
     """
@@ -130,15 +131,16 @@ def calculate_multi_recall(
     for data in tqdm(calc_buffer, ncols=0, leave=False, desc="Recall",
                      disable=not dist.is_main()):
         ious.append(calculate_recall_worker(*data, pad=max_N))
-    ious = torch.cat(ious)  # [5 targets * 1000 samples, 5 proposals]
+    ious = torch.cat(ious)  # [5 targets * 1,xxx samples, 5 proposals]
     recall = {}
     for recall_n in recall_Ns:
         for recall_iou in recall_IoUs:
             shift_t = 0
             recall_list = []
+            # iterate all samples
             for num_t in num_targets:
-                max_ious = ious[shift_t:shift_t + num_t, :recall_n].max(dim=1).values
-                rec = float((max_ious >= recall_iou).long().sum().item() / num_t)
+                max_ious = ious[shift_t:shift_t + num_t, :recall_n].max(dim=1).values   # [num_t]
+                rec = float((max_ious >= recall_iou).long().sum().item() / num_t)   # x/5
                 recall_list.append(rec)
                 shift_t += num_t
             recall[multi_recall_name(recall_n, recall_iou)] = sum(recall_list) / len(recall_list)
@@ -228,8 +230,8 @@ def calculate_mAPs(
 
     APs_dict = {
         'all': APs,                       # all
-        'sgl': APs[num_targets == 1],     # single-target
-        'mul': APs[num_targets > 1],      # multi-target
+        # 'sgl': APs[num_targets == 1],     # single-target
+        # 'mul': APs[num_targets > 1],      # multi-target
     }
 
     mAPs_dict = {}
@@ -253,44 +255,3 @@ def calculate_mAPs(
         results[key] = mAPs_dict[key]
 
     return results
-
-
-def calculate_mAPs_no_mean(
-    pred_moments: List[Dict[str, torch.Tensor]],
-    true_moments: List[Dict[str, torch.Tensor]],
-    mAP_ious: List[float] = torch.linspace(0.5, 0.95, 10),
-    max_proposals: int = 10,
-) -> float:
-    pred_moments = batchs2results(pred_moments)
-    out_moments = pred_moments['out_moments']
-    out_scores1ds = pred_moments['out_scores1ds']
-    num_proposals = pred_moments['num_proposals']
-
-    true_moments = batchs2results(true_moments)
-    tgt_moments = true_moments['tgt_moments']
-    num_targets = true_moments['num_targets']
-
-    # buffer for all samples
-    calc_buffer = []
-    shift_p = 0
-    shift_t = 0
-    for num_p, num_t in zip(num_proposals, num_targets):
-        sample_tgt_moments = tgt_moments[shift_t: shift_t + num_t]
-        calc_buffer.append([
-            sample_tgt_moments,
-            out_moments[shift_p: shift_p + num_p],
-            out_scores1ds[shift_p: shift_p + num_p],
-        ])
-
-        shift_p += num_p
-        shift_t += num_t
-
-    # calculate AP for mixed-length clips
-    APs = []
-    for data in tqdm(calc_buffer, ncols=0, leave=False, desc="mAP",
-                     disable=not dist.is_main()):
-        APs.append(calculate_APs_worker(*data, mAP_ious, max_proposals))
-    APs = torch.stack(APs)   # [num_samples, num_iou_thres]  ex. [1550, 10]
-
-    # return every samples' mAP_avg
-    return APs.mean(dim=1), num_targets  # [1550]

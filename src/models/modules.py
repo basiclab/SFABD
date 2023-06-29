@@ -66,7 +66,6 @@ class SparseMaxPool(nn.Module):
     def __init__(self, counts):
         super().__init__()
         self.counts = counts
-        # self.proj = nn.Conv2d(512, 256, 1)
 
     def forward(self, x):
         B, C, N = x.shape

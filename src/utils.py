@@ -3,6 +3,7 @@ from typing import List, Union, Tuple, Dict
 import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as F
+import matplotlib
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 
@@ -19,26 +20,6 @@ def iou(
     return inter.clamp(min=0) / union                           # [N, M]
 
 
-def rescaled_iou(
-    target_moments: torch.Tensor,                               # [B, 2]
-    proposal_moments: torch.Tensor,                             # [P, 2]
-    num_clips: int,
-) -> torch.Tensor:                                              # [B, P]
-    st1 = target_moments[:, 0:1]                                # [B, 1]
-    ed1 = target_moments[:, 1:2]                                # [B, 1]
-    st2 = proposal_moments[:, 0:1].t()                          # [1, P]
-    ed2 = proposal_moments[:, 1:2].t()                          # [1, P]
-    inter = torch.minimum(ed1, ed2) - torch.maximum(st1, st2)   # [B, P]
-    union = torch.maximum(ed1, ed2) - torch.minimum(st1, st2)   # [B, P]
-    # normalized target len (x% of video_len) * num_grids
-    # how many grids is this target
-    target_len = (ed1 - st1) * num_clips                        # [B, 1]
-    rescale_factor = torch.exp(-target_len + 0.5) + 1           # [B, 1]
-    iou = inter.clamp(min=0) / union                            # [B, P]
-    rescaled_iou = rescale_factor * iou                         # [B, P]
-    return rescaled_iou                                         # [B, P]
-
-
 def batch_iou(
     moments1: torch.Tensor,                                     # [B, N, 2]
     moments2: torch.Tensor,                                     # [B, M, 2]
@@ -52,26 +33,6 @@ def batch_iou(
     union = torch.maximum(ed1, ed2) - torch.minimum(st1, st2)   # [B, N, M]
 
     return inter.clamp(min=0) / union                           # [B, N, M]
-
-
-def batch_diou(
-    moments1: torch.Tensor,                                     # [B, N, 2]
-    moments2: torch.Tensor,                                     # [B, M, 2]
-) -> torch.Tensor:                                              # [B, N, M]
-
-    st1 = moments1[:, :, 0:1]                                   # [B, N, 1]
-    ed1 = moments1[:, :, 1:2]                                   # [B, N, 1]
-    st2 = moments2[:, :, 0:1].permute(0, 2, 1)                  # [B, 1, M]
-    ed2 = moments2[:, :, 1:2].permute(0, 2, 1)                  # [B, 1, M]
-    inter = torch.minimum(ed1, ed2) - torch.maximum(st1, st2)   # [B, N, M]
-    union = torch.maximum(ed1, ed2) - torch.minimum(st1, st2)   # [B, N, M]
-
-    iou = inter.clamp(min=0) / union                            # [B, N, M]
-    mid_dist = torch.abs((st1 + ed1) / 2 - (st2 + ed2) / 2)     # [B, N, M]
-
-    diou = iou - torch.square(mid_dist) / torch.square(union)   # [B, N, M]
-
-    return diou                                                 # [B, N, M]
 
 
 def nms_worker(
@@ -150,24 +111,6 @@ def moments_to_iou2ds(
     return iou2d
 
 
-def moments_to_rescaled_iou2ds(
-    target_moment: torch.Tensor,                                        # [B, 2]
-    num_clips: int,                                                     # N = num_clips
-) -> torch.Tensor:                                                      # [B, N, N]
-    """ Convert batch moment to iou2d."""
-    B, _ = target_moment.shape
-    moments = target_moment.new_ones(num_clips, num_clips).nonzero()    # [P, 2]
-    moments[:, 1] += 1                                                  # [P, 2]
-    moments = moments / num_clips                                       # [P, 2]
-    # target_moment: [B, 2],   moments: [P, 2]  -> [B, P]
-    iou2d = rescaled_iou(target_moment, moments, num_clips)             # [B, P]
-    iou2d = iou2d.view(B, num_clips, num_clips)                         # [B, N, N]
-    # the rescaled IoU may exceed 1
-    iou2d = iou2d.clamp(0, 1)
-    # assert (iou2d >= 0).all() and (iou2d <= 1).all()
-    return iou2d
-
-
 def iou2ds_to_iou2d(
     iou2ds: torch.Tensor,       # [M, N, N]
     num_targets: torch.Tensor,  # [S]
@@ -234,103 +177,3 @@ def plot_moments_on_iou2d(
     fig.tight_layout()
     fig.savefig(path, bbox_inches='tight')
     plt.close(fig)
-
-
-@torch.no_grad()
-def plot_iou2d_and_rescaled_iou2d(
-    iou2d: torch.Tensor,            # [N, N]
-    rescaled_iou2d: torch.Tensor,   # [N, N]
-    path: str,
-):
-    _, N = iou2d.shape  # N: num_clips
-
-    fig, axs = plt.subplots(1, 2, figsize=(10, 5.5))
-    offset = torch.ones(N, N).triu() * 0.05             # for better visualization
-    # cm = plt.cm.get_cmap('Reds')
-    cm = matplotlib.colormaps.get_cmap('Reds')
-
-    # plot gt 2d map
-    iou2d = iou2d.sub(0.5).div(1.0 - 0.5).clamp(0, 1)   # re-scale iou2d
-    iou_plot = axs[0].imshow(iou2d + offset, cmap=cm, vmin=0.0, vmax=1.0)
-    axs[0].set(xlabel='end index', ylabel='start index')
-    axs[0].set_title(f"iou2d")
-    divider = make_axes_locatable(axs[0])
-    cax = divider.append_axes("right", size="5%", pad=0.1)
-    plt.colorbar(iou_plot, cax=cax)
-
-    # plot rescaled 2d map
-    rescaled_iou2d = rescaled_iou2d.sub(0.5).div(1.0 - 0.5).clamp(0, 1)     # re-scale iou2d
-    rescaled_iou_plot = axs[1].imshow(rescaled_iou2d + offset, cmap=cm, vmin=0.0, vmax=1.0)
-    axs[1].set(xlabel='end index', ylabel='start index')
-    axs[1].set_title(f"rescaled iou2d")
-    divider = make_axes_locatable(axs[1])
-    cax = divider.append_axes("right", size="5%", pad=0.1)
-    plt.colorbar(rescaled_iou_plot, cax=cax)
-
-    fig.tight_layout()
-    # plt.show()
-    fig.savefig(path, bbox_inches='tight')
-    plt.close(fig)
-
-
-@torch.no_grad()
-def plot_mask_and_gt(
-    iou2d: torch.Tensor,    # [N, N]
-    mask2d: torch.Tensor,   # [N, N]
-    path: str,
-):
-    _, N = iou2d.shape  # N: num_clips
-
-    fig, axs = plt.subplots(1, 2, figsize=(10, 5.5))
-    offset = torch.ones(N, N).triu() * 0.05     # for better visualization
-    cm = plt.cm.get_cmap('Reds')
-
-    # plot predicted 2d map score
-    scores2d_plot = axs[0].imshow(mask2d + offset, cmap=cm, vmin=0.0, vmax=1.0)
-    axs[0].set(xlabel='end index', ylabel='start index')
-    axs[0].set_title("mask")
-    divider = make_axes_locatable(axs[0])
-    cax = divider.append_axes("right", size="5%", pad=0.1)
-    plt.colorbar(scores2d_plot, cax=cax)
-
-    # plot gt 2d map
-    iou2d = iou2d.sub(0.5).div(1.0 - 0.5).clamp(0, 1)   # re-scale iou2d
-    gt_plot = axs[1].imshow(iou2d + offset, cmap=cm, vmin=0.0, vmax=1.0)
-    axs[1].set(xlabel='end index', ylabel='start index')
-    axs[1].set_title(f"GT")
-    divider = make_axes_locatable(axs[1])
-    cax = divider.append_axes("right", size="5%", pad=0.1)
-    plt.colorbar(gt_plot, cax=cax)
-
-    fig.tight_layout()
-    fig.savefig(path, bbox_inches='tight')
-    plt.close(fig)
-
-
-if __name__ == '__main__':
-    import matplotlib
-    torch.set_printoptions(linewidth=200)
-
-    num_clips = 64
-    num_targets = torch.tensor([3, 4])
-    # moments = torch.rand(num_targets.sum(), 2).sort(dim=1).values
-    moments = torch.Tensor([
-        [0.1, 0.11],
-        [0.27, 0.3],
-        [0.5, 0.9],
-        [0.5, 0.52],
-        [0.6, 0.63],
-        [0.9, 0.92],
-        [0.3, 0.45],
-    ])
-    iou2ds = moments_to_iou2ds(moments, num_clips)
-    rescaled_iou2ds = moments_to_rescaled_iou2ds(moments, num_clips)
-
-    iou2d = iou2ds_to_iou2d(iou2ds, num_targets)
-    rescaled_iou2d = iou2ds_to_iou2d(rescaled_iou2ds, num_targets)
-
-    # for i, (iou2ds_i, rescaled_iou2ds_i) in enumerate(zip(iou2ds, rescaled_iou2ds)):
-    #    plot_iou2d_and_rescaled_iou2d(iou2ds_i, rescaled_iou2ds_i, f'./{i}.jpg')
-
-    for i, (iou2d_i, rescaled_iou2d_i) in enumerate(zip(iou2d, rescaled_iou2d)):
-        plot_iou2d_and_rescaled_iou2d(iou2d_i, rescaled_iou2d_i, f'./{i}.jpg')

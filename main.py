@@ -5,7 +5,7 @@ import click
 import torch.multiprocessing
 
 from src.training import training_loop
-from src.testing import testing_loop
+from src.testing import testing_loop, qv_generate_submission
 from src.misc import AttrDict, CommandAwareConfig
 
 
@@ -17,10 +17,10 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--num_init_clips', default=32)
 @click.option('--num_clips', default=16)
 # datasets
-@click.option('--TrainDataset', "TrainDataset", default='src.datasets.charades.CharadesSTAI3DTrain')
+@click.option('--TrainDataset', "TrainDataset", default='src.datasets.activitynet.ActivityNetI3DTrain')
 @click.option('--ValDataset', "ValDataset", default='src.datasets.activitynet.ActivityNetI3DVal')
-@click.option('--TestDataset', "TestDataset", default='src.datasets.charades.CharadesSTAI3DTest')
-@click.option('--MultiTestDataset', "MultiTestDataset", default='src.datasets.charades.CharadesSTAI3DMultiTest')
+@click.option('--TestDataset', "TestDataset", default='src.datasets.activitynet.ActivityNetI3DTest')
+@click.option('--MultiTestDataset', "MultiTestDataset", default='src.datasets.activitynet.ActivityNetI3DMultiTest')
 # model
 @click.option('--backbone', default="src.models.resnet.ProposalConv")
 @click.option('--feat1d_out_channel', default=512)
@@ -31,18 +31,15 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--conv2d_num_layers', default=8)
 @click.option('--joint_space_size', default=256)
 @click.option('--dual_space/--no-dual_space', default=False)
-@click.option('--resnet', default=34)
-# confidence loss
+@click.option('--resnet', default=18)
+# BCE loss
 @click.option('--IoULoss', 'IoULoss', default="src.losses.iou.ScaledIoULoss")
 @click.option('--min_iou', default=0.5)
 @click.option('--max_iou', default=1.0)
-@click.option('--alpha', default=0.25)
-@click.option('--gamma', default=2.0)
 @click.option('--iou_weight', default=1.0)
 # contrastive loss common settings
 @click.option('--neg_iou', default=0.5)
 @click.option('--pos_topk', default=1)
-@click.option('--top_neg_removal_percent', default=0.01)
 @click.option('--contrastive_decay', default=0.1)
 @click.option('--contrastive_decay_start', default=6)
 # inter contrastive loss
@@ -57,22 +54,15 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--intra_weight', default=0.1)
 # augmentation
 @click.option('--do_augmentation', default=False)
-@click.option('--aug_prob', default=0.75)
-@click.option('--downsampling_prob', default=0.5)
+@click.option('--aug_prob', default=0.25)
+@click.option('--downsampling_prob', default=0.0)
 @click.option('--mixup_alpha', default=0.9)
-@click.option('--aug_expand_rate', default=1.2)
 @click.option('--downsampling_method', default="odd", type=str)
 # False Negative Cancellation
-@click.option('--do_fnc', default=False, help='False Negative Cancellation')
-@click.option('--thres_method', default="mean", type=str)
+@click.option('--do_afnd', default=False, help='False Negative Detection')
+@click.option('--thres_method', default="max", type=str)
 @click.option('--accept_rate_method', default="linear", type=str)
-# Dynamic Negative Sampling
-@click.option('--false_neg_thres', default=0.7, help='threshold for finding false negative')
-@click.option('--fusion_ratio', default=0.5, help='linear combination ratio of inter_query_sim and intra_video_sim')
-@click.option('--exponent', default=1, help='exponent of the fused neg sim distribution')
-@click.option('--neg_samples_num', default=512)
-@click.option('--start_dns_epoch', default=999)
-@click.option('--rate_step_change', default=0.05)
+@click.option('--false_neg_thres', default=0.8, help='threshold for finding false negative')
 # optimizer
 @click.option('--epochs', default=10)
 @click.option('--batch_size', default=24)
@@ -91,9 +81,6 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--logdir', default="./logs/test", type=str)
 @click.option('--best_metric', default="all/mAP@avg")
 @click.option('--save_freq', default=999)
-# visualization options (test_only)
-@click.option('--draw_rec', default=5)
-@click.option('--draw_iou', default=0.7)
 def main(**kwargs):
     config = AttrDict(**kwargs)
 
@@ -124,6 +111,7 @@ def subprocess(rank, world_size, temp_dir, config):
 
     if config.test_only:
         # testing
+        # qv_generate_submission(config)
         testing_loop(config)
     else:
         # training

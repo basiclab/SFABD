@@ -313,8 +313,8 @@ class IntraContrastiveLoss(LogCrossEntropy):
         )
 
 
-# Augmentation version DNS loss
-class InterContrastiveLossDNS(InterContrastiveLoss):
+# Inter contrastive loss with false negative masking
+class InterContrastiveLossAFND(InterContrastiveLoss):
     def __init__(
         self,
         t: float = 0.1,                 # temperature
@@ -322,9 +322,6 @@ class InterContrastiveLossDNS(InterContrastiveLoss):
         neg_iou: float = 0.5,           # negative iou threshold
         pos_topk: int = 1,              # positive topk
         weight: float = 1.0,            # weight
-        exponent: float = 2,
-        neg_samples_num: int = 512,
-        start_DNS_epoch: int = 1,
     ):
         super().__init__(
             t,
@@ -333,9 +330,6 @@ class InterContrastiveLossDNS(InterContrastiveLoss):
             pos_topk,
             weight,
         )
-        self.exponent = exponent
-        self.neg_samples_num = neg_samples_num
-        self.start_DNS_epoch = start_DNS_epoch
 
     def forward(
         self,
@@ -431,7 +425,7 @@ class InterContrastiveLossDNS(InterContrastiveLoss):
 
         # === inter query (sentence -> all video proposals)
         inter_query_pos = inter_video_pos                       # [M, K]
-        # need to convert video_feats from [S, P, C] to [B, P, C]
+        # Convert video_feats from [S, P, C] to [B, P, C]
         inter_query_all = torch.mm(
             sents_feats,                                        # [S, C]
             video_feats[scatter_b2s].view(-1, C).t(),           # [C, B * P]
@@ -447,78 +441,29 @@ class InterContrastiveLossDNS(InterContrastiveLoss):
         local_mask = pos_mask.clone()                           # [S, B * P]
         pos_mask[local_mask] = s2v_pos_mask.view(-1)            # [S, B * P]
 
-        # Do DNS sampling
-        if epoch >= self.start_DNS_epoch:
-            # compute cos_sim of query to all neg proposals
-            # inter_query_all  [S, 1, B * P]
-            inter_query_sim = inter_query_all[scatter_m2s]          # [M, 1, B * P]
-            inter_query_sim = inter_query_sim.squeeze()             # [M, B * P]
-            # [-1, 1] -> [0, 1]
-            inter_query_sim = (inter_query_sim + 1) / 2             # [M, B * P]
-            assert (inter_query_sim > 0 - 1e-3).all()
-            assert (inter_query_sim < 1 + 1e-3).all()
+        inter_query_neg_mask = ~pos_mask.unsqueeze(1)           # [S, 1, B * P]
+        if false_neg_mask is not None:
+            inter_query_neg_mask[false_neg_mask.unsqueeze(dim=1)] = 0    # remove false neg from neg mask
 
-            # fused_neg_sim is used to do dynamic negative sampling
-            fused_neg_sim = inter_query_sim                         # [M, B * P]
-            # x^exponent so that hard neg samples will be sampled more
-            fused_neg_sim = torch.pow(fused_neg_sim, self.exponent)
-            fused_neg_sim[pos_mask[scatter_m2s]] = 0             # ignore pos samples
-            if false_neg_mask is not None:
-                fused_neg_sim[false_neg_mask[scatter_m2s]] = 0   # ignore false neg samples
-            # make sure the amount of negative samples is enough for sampling
-            assert (fused_neg_sim > 0).sum() >= self.neg_samples_num
+        loss_inter_query = super(InterContrastiveLoss, self).forward(
+            inter_query_pos,                                    # [M, K]
+            inter_query_all[scatter_m2s],                       # [M, 1, B * P]
+            inter_query_neg_mask[scatter_m2s],                  # [M, 1, B * P]
+            self.t,
+            self.m,
+        )
 
-            sampled_negative = torch.multinomial(
-                fused_neg_sim,                                      # [M, B * P]
-                self.neg_samples_num,
-                replacement=False,
-            )                                                       # [M, neg_samples_num]
-            sampled_inter_query_neg_mask = torch.zeros_like(fused_neg_sim)  # [M, B * P]
-            # from https://discuss.pytorch.org/t/setting-the-values-at-specific-indices-of-a-2d-tensor/168564
-            sampled_inter_query_neg_mask[range(sampled_negative.shape[0]),
-                                         sampled_negative.t()] = 1  # [M, B * P]
-            assert sampled_inter_query_neg_mask.sum(dim=-1).eq(self.neg_samples_num).all()
-
-            loss_inter_query = super(InterContrastiveLoss, self).forward(
-                inter_query_pos,                                    # [M, K]
-                inter_query_all[scatter_m2s],                       # [M, 1, B * P]
-                sampled_inter_query_neg_mask.unsqueeze(1),          # [M, 1, B * P]
-                self.t,
-                self.m,
-            )
-
-            return (
-                (loss_inter_video + loss_inter_query) * self.weight,
-                {
-                    "loss/inter_video": loss_inter_video,
-                    "loss/inter_query": loss_inter_query,
-                },
-            )
-
-        # No dynamic negative sampling
-        else:
-            inter_query_neg_mask = ~pos_mask.unsqueeze(1)           # [S, 1, B * P]
-            if false_neg_mask is not None:
-                inter_query_neg_mask[false_neg_mask.unsqueeze(dim=1)] = 0    # remove false neg from neg mask
-
-            loss_inter_query = super(InterContrastiveLoss, self).forward(
-                inter_query_pos,                                    # [M, K]
-                inter_query_all[scatter_m2s],                       # [M, 1, B * P]
-                inter_query_neg_mask[scatter_m2s],                  # [M, 1, B * P]
-                self.t,
-                self.m,
-            )
-
-            return (
-                (loss_inter_video + loss_inter_query) * self.weight,
-                {
-                    "loss/inter_video": loss_inter_video,
-                    "loss/inter_query": loss_inter_query,
-                },
-            )
+        return (
+            (loss_inter_video + loss_inter_query) * self.weight,
+            {
+                "loss/inter_video": loss_inter_video,
+                "loss/inter_query": loss_inter_query,
+            },
+        )
 
 
-class IntraContrastiveLossDNS(IntraContrastiveLoss):
+# Intra-video contrastive loss with false negative masking
+class IntraContrastiveLossAFND(IntraContrastiveLoss):
     def __init__(
         self,
         t: float = 0.1,                 # temperature
@@ -526,9 +471,6 @@ class IntraContrastiveLossDNS(IntraContrastiveLoss):
         neg_iou: float = 0.5,           # negative iou threshold
         pos_topk: int = 1,              # positive topk
         weight: float = 1.0,            # weight
-        exponent: float = 2,
-        neg_samples_num: int = 512,
-        start_DNS_epoch: int = 1,
     ):
         super().__init__(
             t,
@@ -537,9 +479,6 @@ class IntraContrastiveLossDNS(IntraContrastiveLoss):
             pos_topk,
             weight,
         )
-        self.exponent = exponent
-        self.neg_samples_num = neg_samples_num
-        self.start_DNS_epoch = start_DNS_epoch
 
     def forward(
         self,
@@ -645,7 +584,6 @@ class IntraContrastiveLossDNS(IntraContrastiveLoss):
             video_feats[scatter_b2s].view(-1, C).t(),           # [C, B * P]
         )                                                       # [M * K, B * P]
 
-        # negative mask
         pos_mask = torch.eye(B, device=device).bool()           # [B, B]
         pos_mask = pos_mask.unsqueeze(-1)                       # [B, B, 1]
         pos_mask = pos_mask.expand(-1, -1, P)                   # [B, B, P]
@@ -656,64 +594,17 @@ class IntraContrastiveLossDNS(IntraContrastiveLoss):
         local_mask = pos_mask.clone()                           # [S, B * P]
         pos_mask[local_mask] = s2v_pos_mask.view(-1)            # [S, B * P]
 
-        if epoch >= self.start_DNS_epoch:
-            # compute cos_sim of topk video proposals and all neg proposals
-            # intra_video_all  [M, B * P]
-            intra_video_all_topk_mean = torch.matmul(
-                topk_video_feats,                                   # [M, K, C]
-                video_feats[scatter_b2s].view(-1, C).t(),           # [C, B * P]
-            ).mean(dim=1)                                           # [M, B * P]
-            # [-1, 1] -> [0, 1]
-            intra_video_sim = (intra_video_all_topk_mean + 1) / 2             # [M, B * P]
-            assert (intra_video_sim > 0 - 1e-3).all()
-            assert (intra_video_sim < 1 + 1e-3).all()
+        intra_video_neg_mask = ~pos_mask                        # [S, B * P]
+        if false_neg_mask is not None:
+            intra_video_neg_mask[false_neg_mask] = 0            # remove false neg from neg mask
 
-            # convert fused_neg_sim from [M, B * P] to [S, B * P]
-            num_t = 0
-            fused_neg_sim = torch.zeros(S, B * P, device=device)
-            for sent_idx, num_target in enumerate(num_targets):
-                fused_neg_sim[sent_idx] = intra_video_sim[num_t:num_t + num_target].mean(dim=0)
-                num_t += num_target
-
-            # x^exponent so that hard negative samples will be sampled more
-            fused_neg_sim = torch.pow(fused_neg_sim, self.exponent)  # [S, B * P]
-            fused_neg_sim[pos_mask] = 0             # ignore pos samples
-            if false_neg_mask is not None:
-                fused_neg_sim[false_neg_mask] = 0       # ignore false neg samples
-            # make sure the amount of negative samples is enough for sampling
-            assert (fused_neg_sim > 0).sum() >= self.neg_samples_num
-
-            sampled_negative = torch.multinomial(
-                fused_neg_sim,                                      # [S, B * P]
-                self.neg_samples_num,
-                replacement=False,
-            )                                                       # [S, neg_samples_num]
-            sampled_intra_video_neg_mask = torch.zeros_like(fused_neg_sim)  # [S, B * P]
-            sampled_intra_video_neg_mask[range(sampled_negative.shape[0]),
-                                         sampled_negative.t()] = 1  # [S, B * P]
-            assert sampled_intra_video_neg_mask.sum(dim=-1).eq(self.neg_samples_num).all()
-
-            loss_intra_video = super(IntraContrastiveLoss, self).forward(
-                intra_video_pos,                                    # [E]
-                intra_video_all[ref_idx],                           # [E, B * P]
-                sampled_intra_video_neg_mask[scatter_e2s],          # [E, B * P]
-                self.t,
-                self.m
-            )
-
-        # No dynamic negative sampling
-        else:
-            intra_video_neg_mask = ~pos_mask                        # [S, B * P]
-            if false_neg_mask is not None:
-                intra_video_neg_mask[false_neg_mask] = 0                # remove false neg from neg mask
-
-            loss_intra_video = super(IntraContrastiveLoss, self).forward(
-                intra_video_pos,                                    # [E]
-                intra_video_all[ref_idx],                           # [E, B * P]
-                intra_video_neg_mask[scatter_e2s],                  # [E, B * P]
-                self.t,
-                self.m
-            )
+        loss_intra_video = super(IntraContrastiveLoss, self).forward(
+            intra_video_pos,                                    # [E]
+            intra_video_all[ref_idx],                           # [E, B * P]
+            intra_video_neg_mask[scatter_e2s],                  # [E, B * P]
+            self.t,
+            self.m
+        )
 
         return (
             loss_intra_video * self.weight,

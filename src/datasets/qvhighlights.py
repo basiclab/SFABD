@@ -12,7 +12,6 @@ class QVHighlights(CollateBase):
         self,
         do_augmentation,
         mixup_alpha,
-        aug_expand_rate,
         downsampling_method,
         aug_prob,
         downsampling_prob,
@@ -23,7 +22,6 @@ class QVHighlights(CollateBase):
             ann_file,
             do_augmentation,
             mixup_alpha,
-            aug_expand_rate,
             downsampling_method,
             aug_prob,
             downsampling_prob,
@@ -54,7 +52,6 @@ class QVHighlightsTrain(QVHighlights):
         self,
         do_augmentation=False,
         mixup_alpha=0.9,
-        aug_expand_rate=1.0,
         downsampling_method='odd',
         aug_prob=0.5,
         downsampling_prob=0.5,
@@ -62,7 +59,6 @@ class QVHighlightsTrain(QVHighlights):
         super().__init__(
             do_augmentation,
             mixup_alpha,
-            aug_expand_rate,
             downsampling_method,
             aug_prob,
             downsampling_prob,
@@ -79,7 +75,6 @@ class QVHighlightsVal(QVHighlights):
         super().__init__(
             do_augmentation=False,
             mixup_alpha=0.0,
-            aug_expand_rate=0.0,
             downsampling_method='None',
             aug_prob=0.0,
             downsampling_prob=0.0,
@@ -96,7 +91,6 @@ class QVHighlightsTest(QVHighlights):
         super().__init__(
             do_augmentation=False,
             mixup_alpha=0.0,
-            aug_expand_rate=0.0,
             downsampling_method='None',
             aug_prob=0.0,
             downsampling_prob=0.0,

@@ -91,8 +91,7 @@ def build_table(cells, row_names, col_names) -> List[str]:
 
 def build_mAP(
     mAPs: Dict[str, float],
-    # row_names: List[str] = ['all', 'sh', 'md', 'lg', 'sgl', 'mul'],
-    row_names: List[str] = ['all', 'sgl', 'mul'],
+    row_names: List[str] = ['all'],
 ) -> None:
     col_names = set()
     cells = defaultdict(dict)

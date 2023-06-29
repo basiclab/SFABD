@@ -16,12 +16,11 @@ from tqdm import tqdm
 import src.dist as dist
 from src.evaluation import calculate_recall, calculate_multi_recall, calculate_mAPs
 from src.misc import (
-    AttrDict, set_seed, construct_class,
-    print_metrics, print_recall, print_mAPs, print_multi_recall)
+    AttrDict, set_seed, construct_class, print_recall, print_mAPs, print_multi_recall
+)
 from src.models.main import MMN
 from src.utils import (
-    nms, scores2ds_to_moments, moments_to_iou2ds, iou2ds_to_iou2d,
-    plot_moments_on_iou2d)
+    nms, scores2ds_to_moments, moments_to_iou2ds, iou2ds_to_iou2d)
 
 
 def append_to_json_file(path, data):
@@ -46,10 +45,9 @@ def test_epoch(
 
     for batch, info in tqdm(loader, ncols=0, leave=False, desc="Inferencing"):
         batch = {key: value.to(device) for key, value in batch.items()}
-        # prediciton
         with torch.no_grad():
             *_, scores2ds, mask2d = model(**batch)
-        # scores2ds: [S, N, N]
+        # scores2ds:   [S, N, N]
         # out_moments: [S, P, 2]
         out_moments, out_scores1ds = scores2ds_to_moments(scores2ds, mask2d)
         # use different nms_thres for different query sample?
@@ -64,30 +62,6 @@ def test_epoch(
         }
         true_moments_batch = dist.gather_dict(true_moments_batch, to_cpu=True)
         true_moments.append(true_moments_batch)
-
-        # plot prediction
-        # batch = {key: value.cpu() for key, value in batch.items()}
-        # iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips)          # [M, N, N]
-        # iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])                       # [S, N, N], separate to combined
-        # if epoch > 0:
-        #     # ploting batch
-        #     shift = 0
-        #     for batch_idx, scores2d in enumerate(scores2ds.cpu()):
-        #         # nms(pred)
-        #         num_proposals = pred_moments_batch['num_proposals'][batch_idx]
-        #         nms_moments = pred_moments_batch["out_moments"][shift: shift + num_proposals]  # [num_proposals, 2]
-        #         nms_moments = (nms_moments * config.num_clips).round().long()
-        #         if info['idx'][batch_idx] % 200 == 0:
-        #             plot_path = os.path.join(
-        #                 config.logdir,
-        #                 "plots",
-        #                 f"{info['idx'][batch_idx]}",
-        #                 f"epoch_{epoch:02d}.jpg")
-        #             if epoch == 1:
-        #                 os.makedirs(os.path.dirname(plot_path), exist_ok=True)
-        #             plot_moments_on_iou2d(
-        #                 iou2d[batch_idx], scores2d, nms_moments, plot_path)
-        #         shift = shift + num_proposals
 
     return pred_moments, true_moments
 
@@ -208,24 +182,14 @@ def find_false_negative(
     pos_mask[local_mask] = s2v_pos_mask.view(-1)            # [S, B * P]
     inter_query_neg_mask = ~pos_mask                        # [S, B * P]
 
-    # compute false neg threshold for each query
-    record_batch_idx = 0
-    # compute record_sent_idx
-    num_s = 0
-    for batch_idx, num_sentence in enumerate(num_sentences):
-        if batch_idx == record_batch_idx:
-            record_sent_idx = num_s
-        num_s += num_sentence
-
     num_t = 0
     false_neg_thres = []            # [S]
     false_neg_accept_rate = []      # [S]
     for sent_idx, num_target in enumerate(num_targets):
-        # adaptive false neg threshold of this query
-        pos_sim_record = inter_query_pos[num_t:num_t + num_target].mean(dim=-1)  # [num_target]
+        pos_sim_record = inter_query_pos[num_t:num_t + num_target].mean(dim=-1)  # top-k positive average
         neg_sim_record = inter_query_sim[sent_idx][inter_query_neg_mask[sent_idx]]
 
-        # false neg threshold
+        # false neg threshold for each sample
         if config.thres_method == "mean":
             false_neg_thres.append(pos_sim_record.mean())
         elif config.thres_method == "max":
@@ -233,11 +197,15 @@ def find_false_negative(
         elif config.thres_method == "fixed":
             false_neg_thres.append(config.false_neg_thres)
 
-        # accept rate
-        if config.accept_rate_method == "linear":  # y = x
-            accept_rate = (pos_sim_record.mean() - neg_sim_record.mean())
-        elif config.accept_rate_method == "linear2x":  # y = 2x
+        # compute acceptance rate for each sample
+        if config.accept_rate_method == "linear2x":  # y = 2x
             accept_rate = 2 * (pos_sim_record.mean() - neg_sim_record.mean())
+        elif config.accept_rate_method == "linear1.5x":  # y = 1.5x
+            accept_rate = 1.5 * (pos_sim_record.mean() - neg_sim_record.mean())
+        elif config.accept_rate_method == "linear1.25x":  # y = 1.25x
+            accept_rate = 1.25 * (pos_sim_record.mean() - neg_sim_record.mean())
+        elif config.accept_rate_method == "linear":  # y = x
+            accept_rate = (pos_sim_record.mean() - neg_sim_record.mean())
         elif config.accept_rate_method == "linear0.5x":  # y = 0.5x
             accept_rate = 0.5 * (pos_sim_record.mean() - neg_sim_record.mean())
         elif config.accept_rate_method == "linear0.25x":  # y = 0.25x
@@ -248,49 +216,39 @@ def find_false_negative(
             accept_rate = 0.05 * (pos_sim_record.mean() - neg_sim_record.mean())
         elif config.accept_rate_method == "linear0.01x":  # y = 0.01x
             accept_rate = 0.01 * (pos_sim_record.mean() - neg_sim_record.mean())
-        elif config.accept_rate_method == "linear0x":  # y = 0x
-            accept_rate = 0.0 * (pos_sim_record.mean() - neg_sim_record.mean())
-        elif config.accept_rate_method == "exp":   # y = e^x - 1
-            accept_rate = torch.exp(pos_sim_record.mean() - neg_sim_record.mean()) - 1
-        elif config.accept_rate_method == "ln":    # y = ln(x + 1)
-            accept_rate = torch.log(pos_sim_record.mean() - neg_sim_record.mean() + 1)
         elif config.accept_rate_method == "linear_baseline":
             accept_rate = epoch / config.epochs
-        elif config.accept_rate_method == "all":
-            accept_rate = 1.0
         false_neg_accept_rate.append(accept_rate)
 
         num_t += num_target
 
-    # fused neg sim for neg sample ranking
-    fused_neg_sim = inter_query_sim                                # [S, B * P]
-
-    # find false neg with adaptive threshold
-    false_neg_mask = torch.zeros_like(fused_neg_sim)        # [S, B * P]
-    for sent_idx, (fused_neg_sim, neg_mask, neg_thres, accept_rate) in enumerate(
-        zip(fused_neg_sim, inter_query_neg_mask, false_neg_thres, false_neg_accept_rate)
+    # make false neg mask
+    false_neg_mask = torch.zeros_like(inter_query_sim)        # [S, B * P]
+    for sent_idx, (inter_query_sim, neg_mask, neg_thres, accept_rate) in enumerate(
+        zip(inter_query_sim, inter_query_neg_mask, false_neg_thres, false_neg_accept_rate)
     ):
-        neg_masked_fused_neg_sim = fused_neg_sim.masked_select(neg_mask)
-        neg_thres_mask = torch.zeros_like(neg_masked_fused_neg_sim)
-        neg_thres_mask[neg_masked_fused_neg_sim > neg_thres] = 1
+        neg_masked_inter_query_sim = inter_query_sim.masked_select(neg_mask)
+        neg_thres_mask = torch.zeros_like(neg_masked_inter_query_sim)
+        neg_thres_mask[neg_masked_inter_query_sim > neg_thres] = 1
         neg_thres_mask = neg_thres_mask.bool()
-        # only keep top-k% as false neg (k = false neg accept rate)
+        # Only accept top-x% as false neg samples
         if neg_thres_mask.sum() > 0:
             K = round(int(min(max(accept_rate, 0), 1) * neg_thres_mask.sum().item()))
-            topk_idx = neg_masked_fused_neg_sim[neg_thres_mask].topk(K, dim=0)[1]
-            keep_mask = torch.zeros_like(neg_masked_fused_neg_sim[neg_thres_mask])
+            topk_idx = neg_masked_inter_query_sim[neg_thres_mask].topk(K, dim=0)[1]
+            keep_mask = torch.zeros_like(neg_masked_inter_query_sim[neg_thres_mask])
             keep_mask[topk_idx] = 1
             temp_mask = torch.zeros_like(false_neg_mask[sent_idx][neg_mask.clone()])
             temp_mask[neg_thres_mask.clone()] = keep_mask
             false_neg_mask[sent_idx][neg_mask.clone()] = temp_mask
         # no neg > thres
         else:
-            false_neg_mask[sent_idx][neg_mask.clone()] = torch.zeros_like(neg_masked_fused_neg_sim)
+            false_neg_mask[sent_idx][neg_mask.clone()] = torch.zeros_like(neg_masked_inter_query_sim)
 
+    # false neg mask for contrastive loss and BCE loss
     false_neg_mask_con = false_neg_mask.bool()                          # [S, B * P]
     false_neg_mask_iou = false_neg_mask_con[local_mask].reshape(S, P)   # [S, P]
 
-    # record false neg info
+    # To record sample learning progress, please comment train_sampler.set_epoch(epoch) in training loop
     # false_neg_vid_list = []
     # false_neg_time_list = []
     # moments = mask2d.nonzero()                                          # [P, 2]
@@ -316,11 +274,11 @@ def find_false_negative(
     #     append_to_json_file(
     #         os.path.join(config.logdir, "false_neg.json"),
     #         {
-    #             'epoch': epoch,                             # int
-    #             'vid': batch_info['vid'][record_batch_idx],                # str
+    #             'epoch': epoch,
+    #             'vid': batch_info['vid'][record_batch_idx],
     #             'query': batch_info['sentences'][record_batch_idx][0],
-    #             'sample_idx': batch_info['idx'][record_batch_idx].item(),         # int
-    #             'pos_sim': pos_sim_record.tolist(),                    # list[float], sim of all pos samples
+    #             'sample_idx': batch_info['idx'][record_batch_idx].item(),
+    #             'pos_sim': pos_sim_record.tolist(),           # list[float], sim of all pos samples
     #             'max_neg_sim': max_neg_sim,                   # float
     #             'mean_neg_sim': mean_neg_sim,                 # float
     #             'min_neg_sim': min_neg_sim,                   # float
@@ -362,7 +320,7 @@ def train_epoch(
         # video_feats: [num_sents, seq_len, feat_dim]
         video_feats, sents_feats, logits2d, scores2ds, mask2d = model(**batch)
 
-        if config.do_fnc:
+        if config.do_afnd:
             # Find false negative and return [S, B * P] mask
             false_neg_mask_con, false_neg_mask_iou = find_false_negative(
                 video_feats=video_feats,
@@ -376,13 +334,11 @@ def train_epoch(
                 epoch=epoch,
                 batch_info=batch_info,
             )
-        # Don't do FNC
+        # Don't do AFND
         else:
             false_neg_mask_con = None
             false_neg_mask_iou = None
 
-        # FNC and DNS loss functions
-        # Control do_dns by start_dns_epoch
         loss_iou, loss_iou_metrics = loss_iou_fn(
             logits2d=logits2d,
             iou2d=iou2d,
@@ -469,7 +425,6 @@ def training_loop(config: AttrDict):
         config.TrainDataset,
         do_augmentation=config.do_augmentation,
         mixup_alpha=config.mixup_alpha,
-        aug_expand_rate=config.aug_expand_rate,
         downsampling_method=config.downsampling_method,
         aug_prob=config.aug_prob,
         downsampling_prob=config.downsampling_prob,
@@ -521,34 +476,26 @@ def training_loop(config: AttrDict):
 
     # loss functions
     loss_iou_fn = construct_class(
-        config.IoULoss + 'DNS',
+        config.IoULoss,
         min_iou=config.min_iou,
         max_iou=config.max_iou,
-        alpha=config.alpha,
-        gamma=config.gamma,
         weight=config.iou_weight,
     )
     loss_inter_fn = construct_class(
-        config.InterContrastiveLoss + 'DNS',
+        config.InterContrastiveLoss,
         t=config.inter_t,
         m=config.inter_m,
         neg_iou=config.neg_iou,
         pos_topk=config.pos_topk,
         weight=config.inter_weight,
-        exponent=config.exponent,
-        neg_samples_num=config.neg_samples_num,
-        start_DNS_epoch=config.start_dns_epoch,
     )
     loss_intra_fn = construct_class(
-        config.IntraContrastiveLoss + 'DNS',
+        config.IntraContrastiveLoss,
         t=config.intra_t,
         m=config.intra_m,
         neg_iou=config.neg_iou,
         pos_topk=config.pos_topk,
         weight=config.intra_weight,
-        exponent=config.exponent,
-        neg_samples_num=config.neg_samples_num,
-        start_DNS_epoch=config.start_dns_epoch,
     )
 
     # model
@@ -780,7 +727,7 @@ def training_loop(config: AttrDict):
                     torch.save(state, path)
 
                 # save best checkpoint
-                # if test_recall[config.best_metric] > best_recall[config.best_metric]:
+                # Consider multi-target metric and config.best_metric at the same time
                 if (test_multi_recall["R@(5/5),IoU=0.5"] + test_recall[config.best_metric]) > (best_multi_recall["R@(5/5),IoU=0.5"] + best_recall[config.best_metric]):
                     best_recall = test_recall
                     best_multi_recall = test_multi_recall
@@ -878,7 +825,7 @@ def training_loop(config: AttrDict):
                 # if val_recall[config.best_metric] > best_val_recall[config.best_metric]:
                 #     best_val_recall = val_recall
 
-                # if test_recall[config.best_metric] > best_recall[config.best_metric]:
+                # Consider multi-target metric and config.best_metric at the same time
                 if (test_multi_recall["R@(5/5),IoU=0.5"] + test_recall[config.best_metric]) > (best_multi_recall["R@(5/5),IoU=0.5"] + best_recall[config.best_metric]):
                     best_recall = test_recall
                     best_multi_recall = test_multi_recall

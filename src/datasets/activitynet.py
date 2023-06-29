@@ -11,12 +11,12 @@ from src.datasets.base import CollateBase
 from src import dist
 
 
+# C3D feature
 class ActivityNetC3D(CollateBase):
     def __init__(
         self,
         do_augmentation,
         mixup_alpha,
-        aug_expand_rate,
         downsampling_method,
         aug_prob,
         downsampling_prob,
@@ -27,7 +27,6 @@ class ActivityNetC3D(CollateBase):
             ann_file,
             do_augmentation,
             mixup_alpha,
-            aug_expand_rate,
             downsampling_method,
             aug_prob,
             downsampling_prob,
@@ -51,7 +50,6 @@ class ActivityNetC3DTrain(ActivityNetC3D):
         self,
         do_augmentation=False,
         mixup_alpha=0.9,
-        aug_expand_rate=1.0,
         downsampling_method='odd',
         aug_prob=0.5,
         downsampling_prob=0.5,
@@ -59,7 +57,6 @@ class ActivityNetC3DTrain(ActivityNetC3D):
         super().__init__(
             do_augmentation,
             mixup_alpha,
-            aug_expand_rate,
             downsampling_method,
             aug_prob,
             downsampling_prob,
@@ -72,7 +69,6 @@ class ActivityNetC3DVal(ActivityNetC3D):
         super().__init__(
             do_augmentation=False,
             mixup_alpha=0.0,
-            aug_expand_rate=0.0,
             downsampling_method='None',
             aug_prob=0.0,
             downsampling_prob=0.0,
@@ -85,7 +81,6 @@ class ActivityNetC3DTest(ActivityNetC3D):
         super().__init__(
             do_augmentation=False,
             mixup_alpha=0.0,
-            aug_expand_rate=0.0,
             downsampling_method='None',
             aug_prob=0.0,
             downsampling_prob=0.0,
@@ -98,7 +93,6 @@ class ActivityNetC3DMultiTest(ActivityNetC3D):
         super().__init__(
             do_augmentation=False,
             mixup_alpha=0.0,
-            aug_expand_rate=0.0,
             downsampling_method='None',
             aug_prob=0.0,
             downsampling_prob=0.0,
@@ -106,12 +100,12 @@ class ActivityNetC3DMultiTest(ActivityNetC3D):
         )
 
 
+# I3D feature
 class ActivityNetI3D(CollateBase):
     def __init__(
         self,
         do_augmentation,
         mixup_alpha,
-        aug_expand_rate,
         downsampling_method,
         aug_prob,
         downsampling_prob,
@@ -122,7 +116,6 @@ class ActivityNetI3D(CollateBase):
             ann_file,
             do_augmentation,
             mixup_alpha,
-            aug_expand_rate,
             downsampling_method,
             aug_prob,
             downsampling_prob,
@@ -135,9 +128,9 @@ class ActivityNetI3D(CollateBase):
     # override
     def get_feat(self, anno):
         path = os.path.join(self.feat_dir, f"{anno['vid']}.npy")
-        feats = np.load(path, 'r')                  # [seq_len, 1, 1, 1024]
+        feats = np.load(path, 'r')                      # [seq_len, 1, 1, 1024]
         feats = torch.from_numpy(feats.copy()).float()
-        feats = feats.squeeze(1).squeeze(1)         # [seq_len, 1024]
+        feats = feats.squeeze(1).squeeze(1)             # [seq_len, 1024]
         feats = F.normalize(feats, dim=-1)
         return feats
 
@@ -147,7 +140,6 @@ class ActivityNetI3DTrain(ActivityNetI3D):
         self,
         do_augmentation=False,
         mixup_alpha=0.9,
-        aug_expand_rate=1.0,
         downsampling_method='odd',
         aug_prob=0.5,
         downsampling_prob=0.5,
@@ -155,7 +147,6 @@ class ActivityNetI3DTrain(ActivityNetI3D):
         super().__init__(
             do_augmentation,
             mixup_alpha,
-            aug_expand_rate,
             downsampling_method,
             aug_prob,
             downsampling_prob,
@@ -168,7 +159,6 @@ class ActivityNetI3DVal(ActivityNetI3D):
         super().__init__(
             do_augmentation=False,
             mixup_alpha=0.0,
-            aug_expand_rate=0.0,
             downsampling_method='None',
             aug_prob=0.0,
             downsampling_prob=0.0,
@@ -181,7 +171,6 @@ class ActivityNetI3DTest(ActivityNetI3D):
         super().__init__(
             do_augmentation=False,
             mixup_alpha=0.0,
-            aug_expand_rate=0.0,
             downsampling_method='None',
             aug_prob=0.0,
             downsampling_prob=0.0,
@@ -194,7 +183,6 @@ class ActivityNetI3DMultiTest(ActivityNetI3D):
         super().__init__(
             do_augmentation=False,
             mixup_alpha=0.0,
-            aug_expand_rate=0.0,
             downsampling_method='None',
             aug_prob=0.0,
             downsampling_prob=0.0,
