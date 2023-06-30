@@ -5,19 +5,33 @@ Folder structure of `./data`.
 ```
 ./data
 ├── CharadesSTA
-│   ├── test.json
-│   ├── test_multitarget.json
+│   ├── VGG
+│   │   └── vgg_rgb_features.hdf5
+│   ├── C3D
+│   │   └── Charades_C3D.hdf5
+│   ├── I3D
+│   │   └── features
+│   │       └── video_id.npy
 │   ├── train.json
-│   ├── train_multitarget.json
-│   └── vgg_rgb_features.hdf5
+│   ├── test.json
+│   └── multi_test.json
+├── ActivityNet
+│   ├── C3D
+│   │   └── activitynet_v1-3_c3d.hdf5
+│   ├── I3D
+│   │   └── video_id.npy
+│   ├── train.json
+│   ├── val.json
+│   ├── test.json
+│   └── multi_test.json
 └── QVHighlights
     ├── features
     │   ├── clip_features
     │   ├── clip_text_features
     │   └── slowfast_features
-    ├── test.json
     ├── train.json
-    └── val.json
+    ├── val.json
+    └── test.json
 ```
 
 ## Pyhton Environments
@@ -41,8 +55,8 @@ Folder structure of `./data`.
     CUDA_VISIBLE_DEVICES=0,1,2,3 python main.py --config path/to/config.json --logdir path/to/log/dir
     ```
 
-## Submission
-- Make sumbission zip file.
+## Testing
+- Testing best.pth in the logdir.
     ```
     python main.py --test_only --config path/to/config.json --logdir path/to/log/dir
     ```
