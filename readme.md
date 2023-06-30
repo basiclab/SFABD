@@ -15,6 +15,7 @@ Folder structure of `./data`.
 │   ├── train.json
 │   ├── test.json
 │   └── multi_test.json
+│
 ├── ActivityNet
 │   ├── C3D
 │   │   └── activitynet_v1-3_c3d.hdf5
@@ -24,6 +25,7 @@ Folder structure of `./data`.
 │   ├── val.json
 │   ├── test.json
 │   └── multi_test.json
+│
 └── QVHighlights
     ├── features
     │   ├── clip_features
