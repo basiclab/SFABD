@@ -435,7 +435,7 @@ def training_loop(config: AttrDict):
         batch_size=config.batch_size // dist.get_world_size(),
         collate_fn=train_dataset.collate_fn,
         sampler=train_sampler,
-        num_workers=min(torch.get_num_threads(), 8),
+        num_workers=min(torch.get_num_threads(), 0),
     )
 
     # if "activity" in config.TrainDataset:

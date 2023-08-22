@@ -397,6 +397,7 @@ class CollateBase(torch.utils.data.Dataset):
         return {
             'video_feats': torch.cat(batch['video_feats'], dim=0),        # [num_sents, max_seq_len, feat_dim]
             'video_masks': video_masks,                                   # [num_sents, max_seq_len]
+            'video_lens': video_lens,                                     # [num_sents]
             'sents_tokens': sentences['input_ids'],                       # [num_sents, max_sent_len]
             'sents_masks': sentences['attention_mask'],                   # [num_sents, max_sent_len]
             'num_sentences': torch.stack(batch['num_sentences'], dim=0),  # [bs] sum = num_sents

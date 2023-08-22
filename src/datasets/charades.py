@@ -1,5 +1,4 @@
 import os
-import random
 
 import h5py
 import numpy as np
@@ -59,7 +58,7 @@ class CharadesSTAVGGTrain(CharadesVGG):
             aug_prob,
             downsampling_prob,
             ann_file="./data/CharadesSTA/train.json",
-            feat_file="./data/CharadesSTA/VGG/vgg_rgb_features.hdf5",
+            feat_file="./data/CharadesSTA/VGG/pt_vgg_rgb_features.hdf5",
         )
 
 
@@ -72,7 +71,7 @@ class CharadesSTAVGGTest(CharadesVGG):
             aug_prob=0.0,
             downsampling_prob=0.0,
             ann_file="./data/CharadesSTA/test.json",
-            feat_file="./data/CharadesSTA/VGG/vgg_rgb_features.hdf5",
+            feat_file="./data/CharadesSTA/VGG/pt_vgg_rgb_features.hdf5",
         )
 
 
@@ -85,7 +84,7 @@ class CharadesSTAVGGMultiTest(CharadesVGG):
             aug_prob=0.0,
             downsampling_prob=0.0,
             ann_file="./data/CharadesSTA/multi_test.json",
-            feat_file="./data/CharadesSTA/VGG/vgg_rgb_features.hdf5",
+            feat_file="./data/CharadesSTA/VGG/pt_vgg_rgb_features.hdf5",
         )
 
 
