@@ -56,5 +56,5 @@
     "seed": 2,
 
     "best_metric": "R@1,IoU=0.7",
-    "logdir": "./logs/charades-FrameVGG-best"
+    "logdir": "./logs/charades-VGG-best-frame"
 }

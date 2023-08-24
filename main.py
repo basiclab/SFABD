@@ -53,7 +53,7 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--intra_m', default=0.0, help='margin for inter contrastive loss')
 @click.option('--intra_weight', default=0.1)
 # augmentation
-@click.option('--do_augmentation', default=False)
+@click.option('--do_augmentation/--no-do_augmentation', default=False)
 @click.option('--aug_prob', default=0.25)
 @click.option('--downsampling_prob', default=0.0)
 @click.option('--mixup_alpha', default=0.9)
@@ -103,7 +103,7 @@ def subprocess(rank, world_size, temp_dir, config):
     print(f"Node {rank} is initialized")
 
     # https://github.com/facebookresearch/maskrcnn-benchmark/issues/103#issuecomment-785815218
-    torch.multiprocessing.set_sharing_strategy('file_system')
+    torch.multiprocessing.set_sharing_strategy('file_descriptor')
 
     # set default device
     torch.cuda.set_device(rank)

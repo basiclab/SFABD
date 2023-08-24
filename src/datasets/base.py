@@ -393,6 +393,16 @@ class CollateBase(torch.utils.data.Dataset):
             )
         video_masks = torch.arange(pad_len)[None, :] < video_lens[:, None]
 
+        if 'aug_frames_st_ed' in batch:
+            augmented_data = {
+                'aug_frames': torch.cat(batch['aug_frames'], dim=0),
+                'tgt_frames': torch.cat(batch['tgt_frames'], dim=0),
+                'aug_frames_st_ed': torch.cat(batch['aug_frames_st_ed'], dim=0),
+                'aug_num': torch.cat(batch['aug_num'], dim=0),
+            }
+        else:
+            augmented_data = None
+
         # Return batch, info
         return {
             'video_feats': torch.cat(batch['video_feats'], dim=0),        # [num_sents, max_seq_len, feat_dim]
@@ -409,6 +419,9 @@ class CollateBase(torch.utils.data.Dataset):
             'vid': batch['vid'],
             'idx': torch.cat(batch['idx']),     # Sample idx for each query [S]
             'duration': batch['duration'],
+
+            # augmentation
+            'augmented_data': augmented_data,
         }
 
 

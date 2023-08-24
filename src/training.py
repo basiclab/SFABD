@@ -2,7 +2,6 @@ import json
 import os
 from collections import defaultdict
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 from tensorboardX import SummaryWriter
@@ -11,6 +10,7 @@ from torch.nn import SyncBatchNorm
 from torch.nn.utils import clip_grad_norm_
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
+from torchvision.models import vgg16, VGG16_Weights
 from tqdm import tqdm
 
 import src.dist as dist
@@ -21,6 +21,57 @@ from src.misc import (
 from src.models.main import MMN
 from src.utils import (
     nms, scores2ds_to_moments, moments_to_iou2ds, iou2ds_to_iou2d)
+
+
+vgg = None
+
+
+def update_vgg_features(video_feats, augmented_data, mixup_alpha):
+    if augmented_data is None:
+        return video_feats
+
+    global vgg
+    if vgg is None:
+        vgg = vgg16(weights=VGG16_Weights.DEFAULT, progress=True)
+        vgg.classifier = torch.nn.Sequential(*list(vgg.classifier.children())[:-1])
+        vgg.eval()
+        vgg = vgg.to(dist.get_device())
+
+    aug_frames = augmented_data['aug_frames']
+    tgt_frames = augmented_data['tgt_frames']
+    aug_frames_st_ed = augmented_data['aug_frames_st_ed']
+    aug_num = augmented_data['aug_num']
+    assert len(video_feats) == len(aug_num)
+
+    aug_feats_all = []
+    for batch in aug_frames.split(32, dim=0):
+        batch = batch.to(dist.get_device())
+        with torch.no_grad():
+            feats = F.normalize(vgg(batch), dim=-1).cpu()
+            aug_feats_all.append(feats)
+    aug_feats_all = torch.cat(aug_feats_all, dim=0)
+
+    tgt_feats_all = []
+    for batch in tgt_frames.split(32, dim=0):
+        batch = batch.to(dist.get_device())
+        with torch.no_grad():
+            feats = F.normalize(vgg(batch), dim=-1).cpu()
+            tgt_feats_all.append(feats)
+    tgt_feats_all = torch.cat(tgt_feats_all, dim=0)
+
+    feats_shift = 0
+    st_ed_shift = 0
+    for i, num in enumerate(aug_num):
+        for st, ed in aug_frames_st_ed[st_ed_shift: st_ed_shift + num]:
+            length = ed.item() - st.item()
+            aug_feats = aug_feats_all[feats_shift: feats_shift + length]
+            tgt_feats = tgt_feats_all[feats_shift: feats_shift + length]
+            new_feats = (1 - mixup_alpha) * aug_feats + mixup_alpha * tgt_feats
+            video_feats[i, st: ed] = new_feats
+            feats_shift += length
+        st_ed_shift += num
+
+    return video_feats
 
 
 def append_to_json_file(path, data):
@@ -314,6 +365,8 @@ def train_epoch(
     pred_moments = []
     true_moments = []
     for batch, batch_info in pbar:
+        batch['video_feats'] = update_vgg_features(
+            batch['video_feats'], batch_info['augmented_data'], config['mixup_alpha'])
         batch = {key: value.to(device) for key, value in batch.items()}
         iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips)  # [M, N, N]
         iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])               # [S, N, N]
@@ -435,7 +488,7 @@ def training_loop(config: AttrDict):
         batch_size=config.batch_size // dist.get_world_size(),
         collate_fn=train_dataset.collate_fn,
         sampler=train_sampler,
-        num_workers=min(torch.get_num_threads(), 0),
+        num_workers=min(torch.get_num_threads(), 2),
     )
 
     # if "activity" in config.TrainDataset:

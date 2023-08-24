@@ -1,69 +1,143 @@
 import glob
 import os
 import random
-from typing import Tuple, Dict
+from typing import Tuple, List
 
 import h5py
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
-from torchvision.models import vgg16, VGG16_Weights
+from torchvision.models import VGG16_Weights
+from tqdm import tqdm
 
 from src.datasets.base import CollateBase
-from src import dist
 
 
 # VGG feature
 class CharadesVGG(CollateBase):
     def __init__(
         self,
+        do_augmentation,
+        aug_prob,
+        downsampling_prob,
         ann_file,           # path to annotation file (.json)
         feat_file,          # path to feature file
         frame_root,         # path to frame directory
-        transform,          # augmentation
         sample_rate=4,      # 24 / 4 = 6 fps
     ):
-        super().__init__(ann_file, do_augmentation=False)
+        super().__init__(
+            ann_file,
+            do_augmentation,
+            0.0,
+            'odd',
+            aug_prob,
+            downsampling_prob,
+        )
         self.feat_file = feat_file
         self.frame_root = frame_root
-        self.transform = transform
         self.sample_rate = sample_rate
-        self.img_transform = VGG16_Weights.DEFAULT.transforms()
 
-        # VGG16
-        self.vgg = vgg16(weights=VGG16_Weights.DEFAULT, progress=True)
-        self.vgg.classifier = nn.Sequential(*list(self.vgg.classifier.children())[:-1])
-        self.vgg = self.vgg.to(dist.get_device())
-        self.vgg.eval()
+        # files cache
+        self.frame_transform = VGG16_Weights.DEFAULT.transforms()
+        self.frame_files = dict()
 
-    def get_frames(self, anno: Dict) -> torch.Tensor:
-        frame_dir = os.path.join(self.frame_root, anno['vid'])
-        frame_files = glob.glob(os.path.join(frame_dir, '*.jpg'))
-        frame_files = sorted(frame_files)
-        frame_files = frame_files[::self.sample_rate]
+    def get_frame_files(self, vid: str) -> List[str]:
+        if vid not in self.frame_files:
+            frame_dir = os.path.join(self.frame_root, vid)
+            frame_files = sorted(glob.glob(os.path.join(frame_dir, '*.jpg')))
+            frame_files = frame_files[::self.sample_rate]
+            self.frame_files[vid] = frame_files
+        return self.frame_files[vid]
+
+    def read_frames(
+        self,
+        vid: str,
+        st: int,
+        ed: int,
+        downsample: bool = False
+    ) -> torch.Tensor:
+        frame_files = self.get_frame_files(vid)
+
+        assert st < ed
+        assert ed <= len(frame_files)
+
         frames = []
-        for frame_file in frame_files:
-            frame = Image.open(frame_file)
-            frame = self.img_transform(frame)
+        for frame_file in frame_files[st: ed: 2 if downsample else 1]:
+            frame_temp = Image.open(frame_file)
+            frame = self.frame_transform(frame_temp.copy())
             frames.append(frame)
+            frame_temp.close()
         return torch.stack(frames, dim=0)
+
+    def augment(
+        self,
+        vid: str,
+        num_frames: int,
+        tgt_moments: torch.Tensor,
+        num_sample: int = 1,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        tgt_moments = tgt_moments.tolist()
+        aug_frames_st_ed = [torch.zeros(0, 2)]
+        aug_frames = [torch.zeros(0, 3, 224, 224).float()]
+        tgt_frames = [torch.zeros(0, 3, 224, 224).float()]
+
+        if self.do_augmentation and random.random() > self.aug_prob:
+            for tgt_moment in random.sample(tgt_moments, num_sample):
+                tgt_st = round((num_frames - 1) * tgt_moment[0])
+                tgt_ed = round((num_frames - 1) * tgt_moment[1]) + 1
+                assert tgt_st < tgt_ed
+                tgt_len = tgt_ed - tgt_st
+
+                downsample = random.random() < self.downsampling_prob
+                if downsample:
+                    tgt_len = (tgt_len // 2) + (tgt_len % 2)
+
+                # Find all possible start frames in source video
+                st_candidates = []
+                prev = 0
+                for moment in sorted(tgt_moments, key=lambda moment: moment[0]):
+                    st = round((num_frames - 1) * moment[0])
+                    ed = round((num_frames - 1) * moment[1]) + 1
+                    assert st < ed
+                    if st - prev >= tgt_len:
+                        st_candidates.extend(range(prev, st - tgt_len + 1))
+                    prev = ed
+                if num_frames - prev >= tgt_len:
+                    st_candidates.extend(
+                        list(range(prev, num_frames - tgt_len + 1)))
+
+                if len(st_candidates) > 0:
+                    # If at least one candidate exists, randomly choose one start
+                    # index in source video
+                    aug_st = random.choice(st_candidates)
+                    aug_ed = aug_st + tgt_len
+                    aug_frames_st_ed.append(torch.tensor([[aug_st, aug_ed]]))
+                    aug_frames.append(self.read_frames(vid, aug_st, aug_ed))
+                    tgt_frames.append(self.read_frames(vid, tgt_st, tgt_ed, downsample))
+                    aug_moment = [
+                        aug_st / (num_frames - 1),
+                        (aug_ed - 1) / (num_frames - 1)
+                    ]
+                    tgt_moments.append(aug_moment)
+
+        aug_frames_st_ed = torch.cat(aug_frames_st_ed, dim=0).long()
+        aug_frames = torch.cat(aug_frames, dim=0)
+        tgt_frames = torch.cat(tgt_frames, dim=0)
+        tgt_moments = torch.tensor(tgt_moments).float()
+
+        return aug_frames_st_ed, aug_frames, tgt_frames, tgt_moments
 
     # override
     def get_feat_dim(self):
         return 4096
 
     # override
-    def get_feat(self, anno):
+    def get_feat(self, vid):
         with h5py.File(self.feat_file, 'r') as f:
-            feats = f[anno['vid']][:]
+            feats = f[vid][:]
             feats = torch.from_numpy(feats).float()
             feats = F.normalize(feats, dim=-1)
         return feats
-
-    # override
-    def __len__(self):
-        return len(self.annos)
 
     # override
     def __getitem__(self, idx):
@@ -80,47 +154,47 @@ class CharadesVGG(CollateBase):
         }
         '''
         anno = self.annos[idx]
-        frames = self.get_frames(anno)                  # [seq_len, 3, 224, 224]
-        video_feats = self.get_feat(anno)               # [seq_len, 4096]
-        assert video_feats.shape[0] == frames.shape[0]
+        vid = anno['vid']
+        video_feats = self.get_feat(vid)
+        num_frames = len(self.get_frame_files(vid))
+        assert video_feats.shape[0] == num_frames
 
         # augmentation
-        new_video_feats_list = []
+        aug_frames_st_ed_list = []
+        aug_frames_list = []
+        tgt_frames_list = []
+        aug_num = []
         new_tgt_moments_list = []
         new_num_targets_list = []
         for tgt_moments in anno['tgt_moments'].split(anno['num_targets'].tolist()):
-            new_video_feats = video_feats.clone()
-            if self.transform:
-                # apply augmentation
-                new_frames, new_tgt_moments = self.transform(frames.clone(), tgt_moments)
-                # extract vgg features for augmented frames only
-                for moments in new_tgt_moments[len(tgt_moments):]:
-                    st = round((frames.shape[0] - 1) * moments[0].item())
-                    ed = round((frames.shape[0] - 1) * moments[1].item()) + 1
-                    assert st < ed
-                    feats_list = []
-                    for batch in new_frames[st:ed].split(32):
-                        batch = batch.to(dist.get_device())
-                        with torch.no_grad():
-                            feats_list.append(self.vgg(batch).cpu())
-                    feats = torch.cat(feats_list, dim=0)    # [ed - st, 4096]
-                    new_video_feats[st:ed] = feats
+            aug_frames_st_ed, aug_frames, tgt_frames, tgt_moments = \
+                self.augment(vid, num_frames, tgt_moments)
+            aug_frames_st_ed_list.append(aug_frames_st_ed)
+            aug_frames_list.append(aug_frames)
+            tgt_frames_list.append(tgt_frames)
+            aug_num.append(len(aug_frames_st_ed))
 
-                new_video_feats_list.append(new_video_feats)
-                new_tgt_moments_list.append(new_tgt_moments)
-                new_num_targets_list.append(len(new_tgt_moments))
-            else:
-                new_video_feats_list.append(new_video_feats)
-                new_tgt_moments_list.append(tgt_moments)
-                new_num_targets_list.append(len(tgt_moments))
+            new_tgt_moments_list.append(tgt_moments)
+            new_num_targets_list.append(len(tgt_moments))
 
-        video_feats = torch.stack(new_video_feats_list, dim=0)
+        aug_frames_st_ed = torch.cat(aug_frames_st_ed_list, dim=0)
+        aug_frames = torch.cat(aug_frames_list, dim=0)
+        tgt_frames = torch.cat(tgt_frames_list, dim=0)
+        aug_num = torch.tensor(aug_num)
+
         tgt_moments = torch.cat(new_tgt_moments_list, dim=0)
         num_targets = torch.tensor(new_num_targets_list)
+        video_feats = video_feats.unsqueeze(0).repeat(
+            anno['num_sentences'], 1, 1
+        )
 
         return {
             'idx': torch.ones(anno['num_sentences'], dtype=torch.long) * idx,
             'video_feats': video_feats,
+            'aug_frames': aug_frames,
+            'tgt_frames': tgt_frames,
+            'aug_frames_st_ed': aug_frames_st_ed,   # [sum(aug_num), 2]
+            'aug_num': aug_num,                     # [num_sentences]
             **anno,
             'tgt_moments': tgt_moments,
             'num_targets': num_targets,
@@ -128,109 +202,61 @@ class CharadesVGG(CollateBase):
 
 
 class CharadesSTAVGGTrain(CharadesVGG):
-    def __init__(self, *args, **kwargs):
+    def __init__(
+        self,
+        do_augmentation=True,
+        aug_prob=0.25,
+        downsampling_prob=0.5,
+        **kwargs
+    ):
         super().__init__(
+            do_augmentation,
+            aug_prob,
+            downsampling_prob,
             ann_file="./data/CharadesSTA/train.json",
             feat_file="./data/CharadesSTA/VGG/pt_vgg_rgb_features.hdf5",
             frame_root="./data/CharadesSTA/Charades_v1_rgb",
-            transform=Mixup(),
         )
 
 
-class AugmentationBase:
-    def __init__(
-        self,
-        min_num: float = 0.0,
-        max_num: float = 1.0,
-    ):
-        self.min_num = min_num
-        self.max_num = max_num
-
-    def fuse(
-        self, back_frames: torch.Tensor, front_frames: torch.Tensor
-    ) -> torch.Tensor:
-        raise NotImplementedError
-
-    def __call__(
-        self, frames: torch.Tensor, tgt_moments: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        tgt_moments = tgt_moments.tolist()
-        num_frames = frames.shape[0]
-        num_targets = len(tgt_moments)
-        num_mix = random.random() * (self.max_num - self.min_num) + self.min_num
-        # print('num_mix * num_targets', num_mix * num_targets)
-        num_mix = round(num_mix * num_targets)
-        # print(num_mix)
-        # num_mix = 1
-
-        front_moments = random.sample(tgt_moments, num_mix)
-        for front_moment in front_moments:
-            front_st = round((num_frames - 1) * front_moment[0])
-            front_ed = round((num_frames - 1) * front_moment[1]) + 1
-            assert front_st < front_ed
-            front_len = front_ed - front_st
-
-            # Find all possible start frames in background
-            back_st_candidates = []
-            prev = 0
-            for tgt_moment in sorted(tgt_moments, key=lambda m: m[0]):
-                tgt_st = round((num_frames - 1) * tgt_moment[0])
-                tgt_ed = round((num_frames - 1) * tgt_moment[1]) + 1
-                assert tgt_st < tgt_ed
-                if tgt_st - prev > front_len:
-                    back_st_candidates.extend(
-                        list(range(prev, tgt_st - front_len)))
-                prev = tgt_ed
-            if num_frames - prev > front_len:
-                back_st_candidates.extend(
-                    list(range(prev, num_frames - front_len)))
-            # print(back_st_candidates)
-
-            if len(back_st_candidates) > 0:
-                # If at least one candidate exists, randomly choose one start
-                # frame in background
-                back_st = random.choice(back_st_candidates)
-                back_ed = back_st + front_len
-                frames[back_st: back_ed] = self.fuse(
-                    frames[back_st: back_ed], frames[front_st: front_ed])
-                tgt_moments.append((
-                    back_st / (num_frames - 1), (back_ed - 1) / (num_frames - 1)
-                ))
-
-        return frames, torch.tensor(tgt_moments)
-
-
-class Mixup(AugmentationBase):
-    def __init__(
-        self,
-        alpha: float = 0.9,
-        min_num: float = 0.0,
-        max_num: float = 1.0,
-    ):
-        super().__init__(min_num, max_num)
-        self.alpha = alpha
-
-    def fuse(
-        self, back_frames: torch.Tensor, front_frames: torch.Tensor
-    ) -> torch.Tensor:
-        return (1 - self.alpha) * back_frames + self.alpha * front_frames
-
-
 if __name__ == '__main__':
+    import torch.multiprocessing
     from torch.utils.data import DataLoader
+    from src.training import update_vgg_features
+
+    torch.multiprocessing.set_sharing_strategy('file_descriptor')
 
     dataset = CharadesSTAVGGTrain()
-    data = dataset[1]
-    print(data['video_feats'].shape)
-    print(data['tgt_moments'].shape)
-    print(data['num_targets'])
+    for k, v in dataset[1].items():
+        if isinstance(v, torch.Tensor):
+            print(k, v.shape)
+        elif isinstance(v, list):
+            print(k, len(v))
+        else:
+            print(k, v)
+    print('---')
 
     loader = DataLoader(
         dataset,
         batch_size=16,
         collate_fn=dataset.collate_fn,
-        num_workers=0,
+        num_workers=1,
     )
     batch, info = next(iter(loader))
-    for key, value in batch.items():
+    augmented_data = info['augmented_data']
+    for key, value in augmented_data.items():
         print(key, value.shape)
+
+    print(batch['tgt_moments'].shape, batch['num_targets'].sum())
+    print(augmented_data['aug_frames_st_ed'].shape, augmented_data['aug_num'].sum())
+    print('---')
+
+    for batch, batch_info in tqdm(loader, ncols=0, desc='simulate training'):
+        batch['video_feats'] = update_vgg_features(
+            batch['video_feats'],
+            batch_info['augmented_data'],
+            mixup_alpha=0.9)
+        assert batch['tgt_moments'].shape[0] == batch['num_targets'].sum()
+
+        augmented_data = info['augmented_data']
+        assert augmented_data['aug_frames_st_ed'].shape[0] == augmented_data['aug_num'].sum()
