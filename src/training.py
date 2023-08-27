@@ -428,6 +428,7 @@ def training_loop(config: AttrDict):
         downsampling_method=config.downsampling_method,
         aug_prob=config.aug_prob,
         downsampling_prob=config.downsampling_prob,
+        cutoff_alpha=config.cutoff_alpha,
     )
     train_sampler = DistributedSampler(train_dataset, shuffle=True, seed=config.seed)
     train_loader = DataLoader(
