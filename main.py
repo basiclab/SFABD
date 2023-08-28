@@ -58,6 +58,7 @@ from src.misc import AttrDict, CommandAwareConfig
 @click.option('--downsampling_prob', default=0.0)
 @click.option('--mixup_alpha', default=0.9)
 @click.option('--downsampling_method', default="odd", type=str)
+@click.option('--cutoff_alpha', default=1.0)
 # False Negative Cancellation
 @click.option('--do_afnd', default=False, help='False Negative Detection')
 @click.option('--thres_method', default="max", type=str)

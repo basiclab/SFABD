@@ -18,8 +18,11 @@ class CharadesVGG(CollateBase):
     def __init__(
         self,
         do_augmentation,
+        mixup_alpha,
+        downsampling_method,
         aug_prob,
         downsampling_prob,
+        cutoff_alpha,
         ann_file,           # path to annotation file (.json)
         feat_file,          # path to feature file
         frame_root,         # path to frame directory
@@ -27,12 +30,18 @@ class CharadesVGG(CollateBase):
     ):
         super().__init__(
             ann_file,
-            do_augmentation,
-            0.0,
-            'odd',
-            aug_prob,
-            downsampling_prob,
+            do_augmentation=False,
+            mixup_alpha=0.0,
+            downsampling_method='odd',
+            aug_prob=0.0,
+            downsampling_prob=0.0,
         )
+        self.do_augmentation = do_augmentation
+        self.mixup_alpha = mixup_alpha
+        self.downsampling_method = downsampling_method
+        self.aug_prob = aug_prob
+        self.downsampling_prob = downsampling_prob
+        self.cutoff_alpha = cutoff_alpha
         self.feat_file = feat_file
         self.frame_root = frame_root
         self.sample_rate = sample_rate
@@ -76,13 +85,14 @@ class CharadesVGG(CollateBase):
         tgt_moments: torch.Tensor,
         num_sample: int = 1,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        new_moments = tgt_moments.tolist()
         tgt_moments = tgt_moments.tolist()
+        aug_frames_list = [torch.zeros(0, 3, 224, 224).float()]
         aug_frames_st_ed = [torch.zeros(0, 2)]
-        aug_frames = [torch.zeros(0, 3, 224, 224).float()]
-        tgt_frames = [torch.zeros(0, 3, 224, 224).float()]
 
-        if self.do_augmentation and random.random() > self.aug_prob:
-            for tgt_moment in random.sample(tgt_moments, num_sample):
+        if self.do_augmentation and random.random() < self.aug_prob:
+            for _ in range(num_sample):
+                tgt_moment = random.choice(tgt_moments)
                 tgt_st = round((num_frames - 1) * tgt_moment[0])
                 tgt_ed = round((num_frames - 1) * tgt_moment[1]) + 1
                 assert tgt_st < tgt_ed
@@ -95,7 +105,7 @@ class CharadesVGG(CollateBase):
                 # Find all possible start frames in source video
                 st_candidates = []
                 prev = 0
-                for moment in sorted(tgt_moments, key=lambda moment: moment[0]):
+                for moment in sorted(new_moments, key=lambda moment: moment[0]):
                     st = round((num_frames - 1) * moment[0])
                     ed = round((num_frames - 1) * moment[1]) + 1
                     assert st < ed
@@ -103,29 +113,40 @@ class CharadesVGG(CollateBase):
                         st_candidates.extend(range(prev, st - tgt_len + 1))
                     prev = ed
                 if num_frames - prev >= tgt_len:
-                    st_candidates.extend(
-                        list(range(prev, num_frames - tgt_len + 1)))
+                    st_candidates.extend(range(prev, num_frames - tgt_len + 1))
 
                 if len(st_candidates) > 0:
                     # If at least one candidate exists, randomly choose one start
                     # index in source video
                     aug_st = random.choice(st_candidates)
                     aug_ed = aug_st + tgt_len
+
+                    src_frames = self.read_frames(vid, aug_st, aug_ed)
+                    tgt_frames = self.read_frames(vid, tgt_st, tgt_ed, downsample)
+                    L, C, H, W = src_frames.shape
+                    assert tgt_frames.shape == (L, C, H, W)
+                    h = int(H * self.cutoff_alpha)
+                    w = int(W * self.cutoff_alpha)
+                    y = torch.randint(H - h + 1, [])
+                    x = torch.randint(W - w + 1, [])
+                    aug_frames = src_frames.clone()
+                    aug_frames[:, :, y: y + h, x: x + w] = \
+                        tgt_frames[:, :, y: y + h, x: x + w] * self.mixup_alpha + \
+                        src_frames[:, :, y: y + h, x: x + w] * (1 - self.mixup_alpha)
+
                     aug_frames_st_ed.append(torch.tensor([[aug_st, aug_ed]]))
-                    aug_frames.append(self.read_frames(vid, aug_st, aug_ed))
-                    tgt_frames.append(self.read_frames(vid, tgt_st, tgt_ed, downsample))
+                    aug_frames_list.append(aug_frames)
                     aug_moment = [
                         aug_st / (num_frames - 1),
                         (aug_ed - 1) / (num_frames - 1)
                     ]
-                    tgt_moments.append(aug_moment)
+                    new_moments.append(aug_moment)
 
         aug_frames_st_ed = torch.cat(aug_frames_st_ed, dim=0).long()
-        aug_frames = torch.cat(aug_frames, dim=0)
-        tgt_frames = torch.cat(tgt_frames, dim=0)
-        tgt_moments = torch.tensor(tgt_moments).float()
+        aug_frames = torch.cat(aug_frames_list, dim=0)
+        new_moments = torch.tensor(new_moments).float()
 
-        return aug_frames_st_ed, aug_frames, tgt_frames, tgt_moments
+        return aug_frames_st_ed, aug_frames, new_moments
 
     # override
     def get_feat_dim(self):
@@ -162,24 +183,21 @@ class CharadesVGG(CollateBase):
         # augmentation
         aug_frames_st_ed_list = []
         aug_frames_list = []
-        tgt_frames_list = []
         aug_num = []
         new_tgt_moments_list = []
         new_num_targets_list = []
         for tgt_moments in anno['tgt_moments'].split(anno['num_targets'].tolist()):
-            aug_frames_st_ed, aug_frames, tgt_frames, tgt_moments = \
+            aug_frames_st_ed, aug_frames, new_tgt_moments = \
                 self.augment(vid, num_frames, tgt_moments)
             aug_frames_st_ed_list.append(aug_frames_st_ed)
             aug_frames_list.append(aug_frames)
-            tgt_frames_list.append(tgt_frames)
             aug_num.append(len(aug_frames_st_ed))
 
-            new_tgt_moments_list.append(tgt_moments)
-            new_num_targets_list.append(len(tgt_moments))
+            new_tgt_moments_list.append(new_tgt_moments)
+            new_num_targets_list.append(len(new_tgt_moments))
 
         aug_frames_st_ed = torch.cat(aug_frames_st_ed_list, dim=0)
         aug_frames = torch.cat(aug_frames_list, dim=0)
-        tgt_frames = torch.cat(tgt_frames_list, dim=0)
         aug_num = torch.tensor(aug_num)
 
         tgt_moments = torch.cat(new_tgt_moments_list, dim=0)
@@ -192,7 +210,6 @@ class CharadesVGG(CollateBase):
             'idx': torch.ones(anno['num_sentences'], dtype=torch.long) * idx,
             'video_feats': video_feats,
             'aug_frames': aug_frames,
-            'tgt_frames': tgt_frames,
             'aug_frames_st_ed': aug_frames_st_ed,   # [sum(aug_num), 2]
             'aug_num': aug_num,                     # [num_sentences]
             **anno,
@@ -204,15 +221,21 @@ class CharadesVGG(CollateBase):
 class CharadesSTAVGGTrain(CharadesVGG):
     def __init__(
         self,
-        do_augmentation=True,
-        aug_prob=0.25,
+        do_augmentation=False,
+        mixup_alpha=0.9,
+        downsampling_method='odd',
+        aug_prob=0.5,
         downsampling_prob=0.5,
+        cutoff_alpha=0.9,
         **kwargs
     ):
         super().__init__(
             do_augmentation,
+            mixup_alpha,
+            downsampling_method,
             aug_prob,
             downsampling_prob,
+            cutoff_alpha,
             ann_file="./data/CharadesSTA/train.json",
             feat_file="./data/CharadesSTA/VGG/pt_vgg_rgb_features.hdf5",
             frame_root="./data/CharadesSTA/Charades_v1_rgb",
@@ -226,7 +249,14 @@ if __name__ == '__main__':
 
     torch.multiprocessing.set_sharing_strategy('file_descriptor')
 
-    dataset = CharadesSTAVGGTrain()
+    dataset = CharadesSTAVGGTrain(
+        do_augmentation=True,
+        mixup_alpha=0.9,
+        downsampling_method='odd',
+        aug_prob=0.25,
+        downsampling_prob=0.5,
+        cutoff_alpha=0.9,
+    )
     for k, v in dataset[1].items():
         if isinstance(v, torch.Tensor):
             print(k, v.shape)
@@ -240,7 +270,7 @@ if __name__ == '__main__':
         dataset,
         batch_size=16,
         collate_fn=dataset.collate_fn,
-        num_workers=1,
+        num_workers=4,
     )
     batch, info = next(iter(loader))
     augmented_data = info['augmented_data']
@@ -254,8 +284,7 @@ if __name__ == '__main__':
     for batch, batch_info in tqdm(loader, ncols=0, desc='simulate training'):
         batch['video_feats'] = update_vgg_features(
             batch['video_feats'],
-            batch_info['augmented_data'],
-            mixup_alpha=0.9)
+            batch_info['augmented_data'])
         assert batch['tgt_moments'].shape[0] == batch['num_targets'].sum()
 
         augmented_data = info['augmented_data']

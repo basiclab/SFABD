@@ -396,7 +396,6 @@ class CollateBase(torch.utils.data.Dataset):
         if 'aug_frames_st_ed' in batch:
             augmented_data = {
                 'aug_frames': torch.cat(batch['aug_frames'], dim=0),
-                'tgt_frames': torch.cat(batch['tgt_frames'], dim=0),
                 'aug_frames_st_ed': torch.cat(batch['aug_frames_st_ed'], dim=0),
                 'aug_num': torch.cat(batch['aug_num'], dim=0),
             }

@@ -26,7 +26,7 @@ from src.utils import (
 vgg = None
 
 
-def update_vgg_features(video_feats, augmented_data, mixup_alpha):
+def update_vgg_features(video_feats, augmented_data):
     if augmented_data is None:
         return video_feats
 
@@ -37,39 +37,31 @@ def update_vgg_features(video_feats, augmented_data, mixup_alpha):
         vgg.eval()
         vgg = vgg.to(dist.get_device())
 
-    aug_frames = augmented_data['aug_frames']
-    tgt_frames = augmented_data['tgt_frames']
     aug_frames_st_ed = augmented_data['aug_frames_st_ed']
+    aug_frames = augmented_data['aug_frames']
     aug_num = augmented_data['aug_num']
     assert len(video_feats) == len(aug_num)
 
-    aug_feats_all = []
+    feats_all = []
     for batch in aug_frames.split(32, dim=0):
         batch = batch.to(dist.get_device())
         with torch.no_grad():
             feats = F.normalize(vgg(batch), dim=-1).cpu()
-            aug_feats_all.append(feats)
-    aug_feats_all = torch.cat(aug_feats_all, dim=0)
-
-    tgt_feats_all = []
-    for batch in tgt_frames.split(32, dim=0):
-        batch = batch.to(dist.get_device())
-        with torch.no_grad():
-            feats = F.normalize(vgg(batch), dim=-1).cpu()
-            tgt_feats_all.append(feats)
-    tgt_feats_all = torch.cat(tgt_feats_all, dim=0)
+            feats_all.append(feats)
+    feats_all = torch.cat(feats_all, dim=0)
 
     feats_shift = 0
     st_ed_shift = 0
+    video_feats = video_feats.clone()
     for i, num in enumerate(aug_num):
         for st, ed in aug_frames_st_ed[st_ed_shift: st_ed_shift + num]:
             length = ed.item() - st.item()
-            aug_feats = aug_feats_all[feats_shift: feats_shift + length]
-            tgt_feats = tgt_feats_all[feats_shift: feats_shift + length]
-            new_feats = (1 - mixup_alpha) * aug_feats + mixup_alpha * tgt_feats
-            video_feats[i, st: ed] = new_feats
+            feats = feats_all[feats_shift: feats_shift + length]
+            video_feats[i, st: ed] = feats_all[feats_shift: feats_shift + length]
             feats_shift += length
         st_ed_shift += num
+    assert st_ed_shift == len(aug_frames_st_ed)
+    assert feats_shift == len(feats_all)
 
     return video_feats
 
@@ -366,7 +358,7 @@ def train_epoch(
     true_moments = []
     for batch, batch_info in pbar:
         batch['video_feats'] = update_vgg_features(
-            batch['video_feats'], batch_info['augmented_data'], config['mixup_alpha'])
+            batch['video_feats'], batch_info['augmented_data'])
         batch = {key: value.to(device) for key, value in batch.items()}
         iou2ds = moments_to_iou2ds(batch['tgt_moments'], config.num_clips)  # [M, N, N]
         iou2d = iou2ds_to_iou2d(iou2ds, batch['num_targets'])               # [S, N, N]
@@ -481,6 +473,7 @@ def training_loop(config: AttrDict):
         downsampling_method=config.downsampling_method,
         aug_prob=config.aug_prob,
         downsampling_prob=config.downsampling_prob,
+        cutoff_alpha=config.cutoff_alpha,
     )
     train_sampler = DistributedSampler(train_dataset, shuffle=True, seed=config.seed)
     train_loader = DataLoader(
@@ -488,7 +481,7 @@ def training_loop(config: AttrDict):
         batch_size=config.batch_size // dist.get_world_size(),
         collate_fn=train_dataset.collate_fn,
         sampler=train_sampler,
-        num_workers=min(torch.get_num_threads(), 2),
+        num_workers=min(torch.get_num_threads(), 4),
     )
 
     # if "activity" in config.TrainDataset:
