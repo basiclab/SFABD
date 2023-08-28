@@ -2,6 +2,7 @@ import os
 
 import h5py
 import numpy as np
+from pandas import cut
 import torch
 import torch.nn.functional as F
 
@@ -17,6 +18,7 @@ class CharadesVGG(CollateBase):
         downsampling_method,
         aug_prob,
         downsampling_prob,
+        cutoff_alpha,
         ann_file,           # path to annotation file (.json)
         feat_file,          # path to feature file
     ):
@@ -27,6 +29,7 @@ class CharadesVGG(CollateBase):
             downsampling_method,
             aug_prob,
             downsampling_prob,
+            cutoff_alpha=cutoff_alpha,
         )
         self.feat_file = feat_file
 
@@ -50,6 +53,7 @@ class CharadesSTAVGGTrain(CharadesVGG):
         downsampling_method='odd',
         aug_prob=0.5,
         downsampling_prob=0.5,
+        cutoff_alpha=1.0,
     ):
         super().__init__(
             do_augmentation,
@@ -57,6 +61,7 @@ class CharadesSTAVGGTrain(CharadesVGG):
             downsampling_method,
             aug_prob,
             downsampling_prob,
+            cutoff_alpha,
             ann_file="./data/CharadesSTA/train.json",
             feat_file="./data/CharadesSTA/VGG/pt_vgg_rgb_features.hdf5",
         )
@@ -70,6 +75,7 @@ class CharadesSTAVGGTest(CharadesVGG):
             downsampling_method='None',
             aug_prob=0.0,
             downsampling_prob=0.0,
+            cutoff_alpha=1.0,
             ann_file="./data/CharadesSTA/test.json",
             feat_file="./data/CharadesSTA/VGG/pt_vgg_rgb_features.hdf5",
         )
@@ -83,6 +89,7 @@ class CharadesSTAVGGMultiTest(CharadesVGG):
             downsampling_method='None',
             aug_prob=0.0,
             downsampling_prob=0.0,
+            cutoff_alpha=1.0,
             ann_file="./data/CharadesSTA/multi_test.json",
             feat_file="./data/CharadesSTA/VGG/pt_vgg_rgb_features.hdf5",
         )

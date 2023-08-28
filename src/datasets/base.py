@@ -21,6 +21,7 @@ class CollateBase(torch.utils.data.Dataset):
         downsampling_method='odd',
         aug_prob=0.75,
         downsampling_prob=0.5,
+        cutoff_alpha=1.0,
     ):
         self.tokenizer = DistilBertTokenizer.from_pretrained(
             "distilbert-base-uncased")
@@ -30,6 +31,7 @@ class CollateBase(torch.utils.data.Dataset):
         self.downsampling_method = downsampling_method
         self.aug_prob = aug_prob
         self.downsampling_prob = downsampling_prob
+        self.cutoff_alpha = cutoff_alpha
 
     def get_feat(self, anno):
         """Get video features for a single video"""
@@ -111,6 +113,17 @@ class CollateBase(torch.utils.data.Dataset):
         else:
             raise ValueError(f"Unknown downsampling method {method}")
 
+        return video_feats
+
+    def fuse(
+        self, video_feats_1: torch.Tensor, video_feats_2: torch.Tensor
+    ) -> torch.Tensor:
+        _, D = video_feats_1.shape
+        mask_indices = torch.randperm(D)[:int(D * self.cutoff_alpha)]
+        video_feats = video_feats_1.clone()
+        video_feats[:, mask_indices] = \
+            video_feats_1[:, mask_indices] * self.mixup_alpha + \
+            video_feats_2[:, mask_indices] * (1 - self.mixup_alpha)
         return video_feats
 
     def augmentation(self, anno, video_feats):
@@ -226,10 +239,17 @@ class CollateBase(torch.utils.data.Dataset):
                             aug_seq_start_idx = aug_seq_start_idx - 1
 
                     # Feature-level mixup
-                    mixup_feat = self.downsample(
-                        self.mixup_alpha * video_feats[idx][target_seq_start_idx:target_seq_end_idx],
-                        self.downsampling_method,
-                    ) + (1 - self.mixup_alpha) * video_feats[idx][aug_seq_start_idx:aug_seq_end_idx]
+                    mixup_feat = self.fuse(
+                        self.downsample(
+                            video_feats[idx][target_seq_start_idx:target_seq_end_idx],
+                            self.downsampling_method
+                        ),
+                        video_feats[idx][aug_seq_start_idx:aug_seq_end_idx],
+                    )
+                    # mixup_feat = self.downsample(
+                    #     self.mixup_alpha * video_feats[idx][target_seq_start_idx:target_seq_end_idx],
+                    #     self.downsampling_method,
+                    # ) + (1 - self.mixup_alpha) * video_feats[idx][aug_seq_start_idx:aug_seq_end_idx]
 
                     # Normalize for cosine similarity
                     video_feats[idx][aug_seq_start_idx:aug_seq_end_idx] = F.normalize(mixup_feat.contiguous(), dim=-1)
@@ -306,8 +326,12 @@ class CollateBase(torch.utils.data.Dataset):
                     assert (aug_seq_end_idx - aug_seq_start_idx) == (target_seq_end_idx - target_seq_start_idx)
 
                     # Feature-level mixup
-                    mixup_feat = self.mixup_alpha * video_feats[idx][target_seq_start_idx:target_seq_end_idx] \
-                        + (1 - self.mixup_alpha) * video_feats[idx][aug_seq_start_idx:aug_seq_end_idx]
+                    mixup_feat = self.fuse(
+                        video_feats[idx][target_seq_start_idx:target_seq_end_idx],
+                        video_feats[idx][aug_seq_start_idx:aug_seq_end_idx],
+                    )
+                    # mixup_feat = self.mixup_alpha * video_feats[idx][target_seq_start_idx:target_seq_end_idx] \
+                    #     + (1 - self.mixup_alpha) * video_feats[idx][aug_seq_start_idx:aug_seq_end_idx]
 
                     # Normalize for cosine similarity
                     video_feats[idx][aug_seq_start_idx:aug_seq_end_idx] = F.normalize(mixup_feat.contiguous(), dim=-1)
