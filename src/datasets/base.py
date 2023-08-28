@@ -116,14 +116,14 @@ class CollateBase(torch.utils.data.Dataset):
         return video_feats
 
     def fuse(
-        self, video_feats_1: torch.Tensor, video_feats_2: torch.Tensor
+        self, tgt_feats: torch.Tensor, src_feats: torch.Tensor
     ) -> torch.Tensor:
-        _, D = video_feats_1.shape
+        _, D = tgt_feats.shape
         mask_indices = torch.randperm(D)[:int(D * self.cutoff_alpha)]
-        video_feats = video_feats_1.clone()
+        video_feats = src_feats.clone()
         video_feats[:, mask_indices] = \
-            video_feats_1[:, mask_indices] * self.mixup_alpha + \
-            video_feats_2[:, mask_indices] * (1 - self.mixup_alpha)
+            tgt_feats[:, mask_indices] * self.mixup_alpha + \
+            src_feats[:, mask_indices] * (1 - self.mixup_alpha)
         return video_feats
 
     def augmentation(self, anno, video_feats):
