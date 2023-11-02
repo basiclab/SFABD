@@ -25,8 +25,8 @@ Folder structure of `./data`.
 │   │   └── activitynet_v1-3_c3d.hdf5
 │   ├── I3D
 │   │   └── video_id.npy
-|       └── video_id.npy
-|       └── ...
+|   |   └── video_id.npy
+|   |   └── ...
 │   ├── train.json
 │   ├── val.json
 │   ├── test.json
@@ -67,9 +67,9 @@ Folder structure of `./data`.
 [OneDrive](https://nycu1-my.sharepoint.com/:f:/g/personal/vin30731_ee10_m365_nycu_edu_tw/EpZ0TOQDHdVBkE-PSbmt_IIBF9hDj3nXDvxBDSHg4jdOPw?e=KczAkv)
 
 ## Testing
-- Testing best.pth in the logdir.
+- Testing best.pth in the logdir
     ```
-    python main.py --test_only --config path/to/config.json --logdir path/to/log/dir
+    python main.py --test_only --config ./config/charades-I3D.json --logdir path/to/log/dir
     ```
 
 ## Tensorboard
