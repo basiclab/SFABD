@@ -19,7 +19,7 @@ class CharadesVGG(CollateBase):
         aug_prob,
         downsampling_prob,
         ann_file,           # path to annotation file (.json)
-        feat_file,          # path to feature file
+        feat_file="./data/CharadesSTA/VGG/vgg_rgb_features.hdf5",          # path to feature file
     ):
         super().__init__(
             ann_file,
@@ -59,7 +59,6 @@ class CharadesSTAVGGTrain(CharadesVGG):
             aug_prob,
             downsampling_prob,
             ann_file="./data/CharadesSTA/train.json",
-            feat_file="./data/CharadesSTA/VGG/vgg_rgb_features.hdf5",
         )
 
 
@@ -72,7 +71,6 @@ class CharadesSTAVGGTest(CharadesVGG):
             aug_prob=0.0,
             downsampling_prob=0.0,
             ann_file="./data/CharadesSTA/test.json",
-            feat_file="./data/CharadesSTA/VGG/vgg_rgb_features.hdf5",
         )
 
 
@@ -85,7 +83,6 @@ class CharadesSTAVGGMultiTest(CharadesVGG):
             aug_prob=0.0,
             downsampling_prob=0.0,
             ann_file="./data/CharadesSTA/multi_test.json",
-            feat_file="./data/CharadesSTA/VGG/vgg_rgb_features.hdf5",
         )
 
 
@@ -99,7 +96,7 @@ class CharadesC3D(CollateBase):
         aug_prob,
         downsampling_prob,
         ann_file,           # path to annotation file (.json)
-        feat_dir,          # path to feature file
+        feat_dir="./data/CharadesSTA/C3D/Charades_C3D.hdf5",    # path to feature file
     ):
         super().__init__(
             ann_file,
@@ -114,8 +111,6 @@ class CharadesC3D(CollateBase):
     def get_feat_dim(self):
         return 4096
 
-    # override
-    # hdf5 version
     def get_feat(self, anno):
         with h5py.File(self.feat_dir, 'r') as f:
             feats = f[anno['vid']][:]
@@ -141,7 +136,6 @@ class CharadesSTAC3DTrain(CharadesC3D):
             aug_prob,
             downsampling_prob,
             ann_file="./data/CharadesSTA/train.json",
-            feat_dir="./data/CharadesSTA/C3D/Charades_C3D.hdf5",
         )
 
 
@@ -154,7 +148,6 @@ class CharadesSTAC3DTest(CharadesC3D):
             aug_prob=0.0,
             downsampling_prob=0.0,
             ann_file="./data/CharadesSTA/test.json",
-            feat_dir="./data/CharadesSTA/C3D/Charades_C3D.hdf5",
         )
 
 
@@ -167,7 +160,6 @@ class CharadesSTAC3DMultiTest(CharadesC3D):
             aug_prob=0.0,
             downsampling_prob=0.0,
             ann_file="./data/CharadesSTA/multi_test.json",
-            feat_dir="./data/CharadesSTA/C3D/Charades_C3D.hdf5",   # .hdf5 file
         )
 
 
@@ -181,7 +173,7 @@ class CharadesI3D(CollateBase):
         aug_prob,
         downsampling_prob,
         ann_file,           # path to annotation file (.json)
-        feat_dir,           # path to feature file
+        feat_dir="./data/CharadesSTA/I3D/",   # path to feature file
     ):
         super().__init__(
             ann_file,
@@ -223,7 +215,6 @@ class CharadesSTAI3DTrain(CharadesI3D):
             aug_prob,
             downsampling_prob,
             ann_file="./data/CharadesSTA/train.json",
-            feat_dir="./data/CharadesSTA/I3D/features/",
         )
 
 
@@ -236,7 +227,6 @@ class CharadesSTAI3DTest(CharadesI3D):
             aug_prob=0.0,
             downsampling_prob=0.0,
             ann_file="./data/CharadesSTA/test.json",
-            feat_dir="./data/CharadesSTA/I3D/features/",
         )
 
 
@@ -249,5 +239,4 @@ class CharadesSTAI3DMultiTest(CharadesI3D):
             aug_prob=0.0,
             downsampling_prob=0.0,
             ann_file="./data/CharadesSTA/multi_test.json",
-            feat_dir="./data/CharadesSTA/I3D/features/",
         )
