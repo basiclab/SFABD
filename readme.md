@@ -29,6 +29,7 @@ This is the official implementation of the paper [Semantic Fusion Augmentation a
     │   │   ├── v_00Dk03Jr70M.npy
     │   │   ├── v_00KMCm2oGhk.npy
     │   │   ├── ...
+    |   |   └── ...
     │   ├── multi_test.json
     │   ├── test.json
     │   ├── train.json
@@ -39,10 +40,10 @@ This is the official implementation of the paper [Semantic Fusion Augmentation a
     │   ├── C3D
     │   │   └── Charades_C3D.hdf5
     │   ├── I3D
-    │   │   └── features
-    │   │       ├── 001YG.npy
-    │   │       ├── 003WS.npy
-    │   │       ├── ...
+    │   │   ├── 001YG.npy
+    │   │   ├── 003WS.npy
+    │   │   ├── ...
+    |   |   └── ...
     │   ├── multi_test.json
     │   ├── test.json
     │   └── train.json
@@ -106,7 +107,7 @@ If you find this code useful for your research, please cite our paper:
 ```
 @InProceedings{Huang_2024_WACV,
     author    = {Cheng Huang, Yi-Lun Wu, Hong-Han Shuai, Ching-Chun Huang},
-    title     = {Semantic Fusion Augmentation and Semantic Boundary Detection: A Novel Approach to Multi-Target Video Moment Retrieva},
+    title     = {Semantic Fusion Augmentation and Semantic Boundary Detection: A Novel Approach to Multi-Target Video Moment Retrieval},
     booktitle = {Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision (WACV)},
     month     = {January},
     year      = {2024}
